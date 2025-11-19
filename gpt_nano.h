@@ -101,6 +101,7 @@ typedef struct {
     float proj_weight[N_EMBD][N_EMBD];
     float ln1_gamma[N_EMBD];
     float ln1_beta[N_EMBD];
+    int n_params;  // Total parameter count
 } GPTNano;
 
 // Initialize with small random-ish values
@@ -132,11 +133,18 @@ static void gpt_nano_init(GPTNano* model) {
         }
     }
     
-    // Layer norm
+    // Layer norm params
     for (int i = 0; i < N_EMBD; i++) {
         model->ln1_gamma[i] = 1.0f;
         model->ln1_beta[i] = 0.0f;
     }
+    
+    // Calculate parameter count
+    model->n_params = (VOCAB_SIZE * N_EMBD) +    // token embeddings
+                      (BLOCK_SIZE * N_EMBD) +     // position embeddings
+                      (N_EMBD * 3 * N_EMBD) +     // QKV weights
+                      (N_EMBD * N_EMBD) +         // projection
+                      (N_EMBD * 2);               // layer norm
 }
 
 // Simple forward pass (single token prediction)
@@ -227,6 +235,52 @@ static void gpt_nano_generate(GPTNano* model, const CHAR16* prompt,
     }
     
     output[out_idx] = L'\0';
+}
+
+// Forward pass that returns logits (for sampling)
+static void gpt_nano_forward_logits(GPTNano* model, UINT8* context, int context_len, float* logits) {
+    if (context_len == 0 || context_len > BLOCK_SIZE) {
+        // Return uniform distribution
+        for (int i = 0; i < VOCAB_SIZE; i++) {
+            logits[i] = 0.0f;
+        }
+        return;
+    }
+    
+    // Get last token embedding + positional
+    float hidden[N_EMBD];
+    int last_token = context[context_len - 1];
+    int pos = (context_len - 1) % BLOCK_SIZE;
+    
+    for (int i = 0; i < N_EMBD; i++) {
+        hidden[i] = model->token_embedding[last_token][i] + 
+                    model->position_embedding[pos][i];
+    }
+    
+    // Layer norm
+    layer_norm(hidden, N_EMBD);
+    
+    // Simplified attention (uses last hidden state)
+    float attn_out[N_EMBD];
+    for (int i = 0; i < N_EMBD; i++) {
+        attn_out[i] = hidden[i];
+    }
+    
+    // Residual + layer norm
+    for (int i = 0; i < N_EMBD; i++) {
+        hidden[i] += attn_out[i];
+    }
+    layer_norm(hidden, N_EMBD);
+    
+    // Project to vocabulary
+    for (int i = 0; i < VOCAB_SIZE; i++) {
+        logits[i] = 0.0f;
+        for (int j = 0; j < N_EMBD; j++) {
+            logits[i] += hidden[j] * model->token_embedding[i][j];
+        }
+    }
+    
+    // Note: Caller applies softmax + temperature
 }
 
 #endif // GPT_NANO_H

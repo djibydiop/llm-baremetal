@@ -20,16 +20,22 @@ GPTNano g_model;
 #define MAX_PROMPT_LEN 64
 #define MAX_GEN_TOKENS 128
 
-// Simple random number generator (LCG)
+// Random number generator (xorshift from llm.c)
+// Reference: https://en.wikipedia.org/wiki/Xorshift#xorshift*
+// Better distribution than LCG, passes statistical tests
 static UINT64 g_rng_state = 1337;
 
 static UINT32 random_u32() {
-    g_rng_state = g_rng_state * 1103515245 + 12345;
-    return (UINT32)(g_rng_state >> 32);
+    // xorshift rng from llm.c (train_gpt2.c)
+    g_rng_state ^= g_rng_state >> 12;
+    g_rng_state ^= g_rng_state << 25;
+    g_rng_state ^= g_rng_state >> 27;
+    return (g_rng_state * 0x2545F4914F6CDD1Dull) >> 32;
 }
 
 static float random_f32() {
-    return (float)random_u32() / (float)0xFFFFFFFF;
+    // Random float in [0, 1) from llm.c
+    return (random_u32() >> 8) / 16777216.0f;
 }
 
 // Softmax with temperature for sampling
@@ -50,7 +56,10 @@ static void softmax_temp(float* logits, int size, float temperature) {
     }
 }
 
-// Multinomial sampling
+// Multinomial sampling (identical to llm.c implementation)
+// Reference: train_gpt2.c sample_mult()
+// Samples index from probability distribution
+// coin is random float in [0, 1), probs must sum to 1.0
 static int sample_mult(float* probs, int size, float coin) {
     float cdf = 0.0f;
     for (int i = 0; i < size; i++) {
@@ -59,7 +68,7 @@ static int sample_mult(float* probs, int size, float coin) {
             return i;
         }
     }
-    return size - 1;
+    return size - 1; // in case of rounding errors
 }
 
 // Generate text from prompt
@@ -93,7 +102,8 @@ static void generate(const CHAR16* prompt_str, int max_tokens, float temperature
         Print(L"%c", (CHAR16)tokens[i]);
     }
     
-    // Generate tokens autoregressively
+    // Generate tokens autoregressively (pattern from llm.c)
+    // Reference: train_gpt2.c lines 1130-1160
     for (int t = prompt_len; t < max_tokens && t < MAX_GEN_TOKENS; t++) {
         // Build context window (last BLOCK_SIZE tokens)
         UINT8 context[BLOCK_SIZE];
@@ -104,14 +114,14 @@ static void generate(const CHAR16* prompt_str, int max_tokens, float temperature
             context[context_len++] = tokens[i];
         }
         
-        // Forward pass
+        // Forward pass (similar to gpt2_forward in llm.c)
         float logits[VOCAB_SIZE];
         gpt_nano_forward_logits(&g_model, context, context_len, logits);
         
         // Apply temperature and softmax
         softmax_temp(logits, VOCAB_SIZE, temperature);
         
-        // Sample next token
+        // Sample next token (same algorithm as llm.c)
         float coin = random_f32();
         int next_token = sample_mult(logits, VOCAB_SIZE, coin);
         

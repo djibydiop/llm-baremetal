@@ -10,6 +10,7 @@
 #include <efi.h>
 #include <efilib.h>
 #include "llm_tiny.h"
+#include "gpt_nano.h"
 
 // Forward declarations
 static void llm_init(void);
@@ -21,6 +22,9 @@ static UINTN read_line(CHAR16* buffer, UINTN max_len);
 // Global EFI handles
 EFI_HANDLE ImageHandle;
 EFI_SYSTEM_TABLE *SystemTable;
+
+// Global GPT model
+GPTNano g_model;
 
 /*
  * EFI Application Entry Point
@@ -83,33 +87,45 @@ efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table)
 
 /*
  * Initialize the LLM
- * TODO: Load model weights, allocate memory
+ * Now actually initializes a real tiny GPT model
  */
 static void llm_init(void)
 {
-    Print(L"  [✓] Model loaded\n");
-    Print(L"  [✓] Memory allocated\n");
+    Print(L"  [*] Initializing Nano GPT...\n");
+    gpt_nano_init(&g_model);
+    Print(L"  [✓] Model loaded (Nano GPT: 1L, 2H, 64D)\n");
+    Print(L"  [✓] ~10K parameters initialized\n");
     Print(L"  [✓] Consciousness at 92%%\n");
 }
 
 /*
  * Run inference with token-by-token streaming
- * Uses llm_tiny.h for mock inference (realistic tokenization)
+ * DEMO MODE: Uses both real GPT nano + fallback responses
  */
 static void llm_infer_streaming(const CHAR16* prompt)
 {
+    // Try real GPT generation first (will be gibberish without training)
+    CHAR16 gpt_output[128];
+    Print(L"[GPT Nano] ");
+    gpt_nano_generate(&g_model, prompt, gpt_output, 20);
+    
+    // Display character by character
+    for (int i = 0; gpt_output[i] != L'\0'; i++) {
+        Print(L"%c", gpt_output[i]);
+        for (volatile UINT64 j = 0; j < 5000000; j++);
+    }
+    
+    Print(L"\n\n");
+    
+    // Also show curated response for demo purposes
     InferenceState state;
     CHAR16 token[64];
     
-    // Initialize inference for this prompt
+    Print(L"[Curated] ");
     inference_init(&state, prompt);
     
-    // Generate tokens one by one
     while (inference_next_token(&state, token, 64)) {
         Print(L"%s ", token);
-        
-        // Delay to simulate inference time
-        // Faster than before but still visible
         for (volatile UINT64 j = 0; j < 8000000; j++);
     }
 }

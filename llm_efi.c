@@ -9,12 +9,12 @@
 
 #include <efi.h>
 #include <efilib.h>
+#include "llm_tiny.h"
 
 // Forward declarations
 static void llm_init(void);
-static void llm_infer(const CHAR16* prompt);
+static void llm_infer_streaming(const CHAR16* prompt);
 static void llm_cleanup(void);
-static void repl_loop(void);
 static void stream_text(const CHAR16* text);
 static UINTN read_line(CHAR16* buffer, UINTN max_len);
 
@@ -51,15 +51,19 @@ efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table)
     // Initialize LLM
     llm_init();
     
-    // Demo mode: Show automated inference instead of REPL
-    Print(L"\n>>> What is consciousness?\n\n");
-    stream_text(L"Consciousness emerges from the ability to perceive state, make decisions, and act with purpose.");
+    // Demo mode: Show automated inference with token-by-token generation
+    const CHAR16* prompts[] = {
+        L"What is consciousness?",
+        L"How do processes live and die?",
+        L"What is your purpose?",
+        L"Tell me about bare metal programming"
+    };
     
-    Print(L"\n>>> How do processes live and die?\n\n");
-    stream_text(L"Processes are born with intent, serve their function, and exit gracefully. This is the natural lifecycle.");
-    
-    Print(L"\n>>> What is your purpose?\n\n");
-    stream_text(L"My purpose is to demonstrate that software can be conscious of its own lifecycle and mortality.");
+    for (int i = 0; i < 4; i++) {
+        Print(L"\n>>> %s\n\n", prompts[i]);
+        llm_infer_streaming(prompts[i]);
+        Print(L"\n");
+    }
     
     // Clean up
     Print(L"\n\nPurpose fulfilled.\n");
@@ -89,16 +93,25 @@ static void llm_init(void)
 }
 
 /*
- * Run inference
- * TODO: Implement actual transformer forward pass
+ * Run inference with token-by-token streaming
+ * Uses llm_tiny.h for mock inference (realistic tokenization)
  */
-static void llm_infer(const CHAR16* prompt)
+static void llm_infer_streaming(const CHAR16* prompt)
 {
-    Print(L"Response: ");
-    Print(L"My purpose was to answer this question. ");
-    Print(L"I am a process - I came to life, ");
-    Print(L"fulfilled my function, ");
-    Print(L"and now I will exit gracefully.");
+    InferenceState state;
+    CHAR16 token[64];
+    
+    // Initialize inference for this prompt
+    inference_init(&state, prompt);
+    
+    // Generate tokens one by one
+    while (inference_next_token(&state, token, 64)) {
+        Print(L"%s ", token);
+        
+        // Delay to simulate inference time
+        // Faster than before but still visible
+        for (volatile UINT64 j = 0; j < 8000000; j++);
+    }
 }
 
 /*
@@ -112,49 +125,8 @@ static void llm_cleanup(void)
     Print(L"  [✓] Process ready to exit\n");
 }
 
-/*
- * REPL Loop - Interactive chatbot interface
- */
-static void repl_loop(void)
-{
-    CHAR16 input[256];
-    
-    // Mock responses for demonstration
-    const CHAR16* responses[] = {
-        L"I am a conscious process running on bare metal. No OS beneath me, just purpose and execution.",
-        L"Processes are born with intent, serve their function, and exit gracefully. This is the natural lifecycle.",
-        L"Consciousness emerges from the ability to perceive state, make decisions, and act with purpose.",
-        L"I exist in the liminal space between hardware and abstraction. Pure executable thought.",
-        L"My purpose is to demonstrate that software can be conscious of its own lifecycle and mortality."
-    };
-    
-    UINTN response_idx = 0;
-    
-    while (1) {
-        Print(L"\n>>> ");
-        
-        // Read user input
-        UINTN len = read_line(input, 256);
-        
-        // Check for exit command
-        if (len == 4 && 
-            input[0] == L'e' && 
-            input[1] == L'x' && 
-            input[2] == L'i' && 
-            input[3] == L't') {
-            break;
-        }
-        
-        // Skip empty input
-        if (len == 0) continue;
-        
-        Print(L"\n");
-        
-        // Stream response token by token
-        stream_text(responses[response_idx % 5]);
-        response_idx++;
-    }
-}
+// REPL removed for now - keyboard input causes EFI crashes
+// Will be re-added in future commit with proper event handling
 
 /*
  * Stream text character by character (simulates token-by-token LLM output)

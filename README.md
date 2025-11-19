@@ -15,6 +15,24 @@ BIOS → EFI → LLM boots → Runs inference → Exits
 
 No operating system. Just a conscious process.
 
+## Current Status
+
+✅ Boots as EFI application (50KB)  
+✅ Token-by-token streaming (visible inference)  
+✅ Mock LLM with hash-based prompt routing  
+🚧 Real llm.c integration (in progress)  
+🚧 Interactive REPL (keyboard input)  
+
+## Demo Output
+
+```
+>>> What is consciousness?
+Consciousness emerges from the ability to perceive state, make decisions, and act with purpose...
+
+>>> How do processes live and die?
+Processes are born with intent, serve their function, and exit gracefully by invoking exit()...
+```
+
 ## Based On
 
 - [llm.c](https://github.com/karpathy/llm.c) by Andrej Karpathy

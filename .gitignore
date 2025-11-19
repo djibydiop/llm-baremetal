@@ -1,0 +1,13 @@
+# Ignore build artifacts
+*.o
+*.so
+*.efi
+*.img
+
+# IDE
+.vscode/
+.vs/
+
+# OS
+.DS_Store
+Thumbs.db

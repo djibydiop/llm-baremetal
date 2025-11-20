@@ -474,25 +474,49 @@ int argmax(float* v, int n) {
 // ----------------------------------------------------------------------------
 // EFI MODIFICATIONS START HERE
 
-EFI_STATUS load_model(EFI_HANDLE ImageHandle, Transformer* transformer, CHAR16* checkpoint_path) {
+EFI_STATUS load_model(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable, Transformer* transformer, CHAR16* checkpoint_path) {
     EFI_STATUS Status;
+    EFI_LOADED_IMAGE *LoadedImage;
     EFI_FILE_IO_INTERFACE *FileSystem;
     EFI_FILE_HANDLE Root;
     EFI_FILE_HANDLE File;
-    EFI_GUID FileSystemProtocol = SIMPLE_FILE_SYSTEM_PROTOCOL;
     
-    // Open file system
-    Status = BS->HandleProtocol(ImageHandle, &FileSystemProtocol, (VOID**)&FileSystem);
+    Print(L"[DEBUG] Getting loaded image protocol...\r\n");
+    
+    // Use uefi_call_wrapper for proper calling convention
+    Status = uefi_call_wrapper(SystemTable->BootServices->HandleProtocol, 3,
+        ImageHandle,
+        &LoadedImageProtocol,
+        (void**)&LoadedImage
+    );
     if (EFI_ERROR(Status)) {
-        Print(L"Failed to open file system\r\n");
+        Print(L"[ERROR] Failed to get loaded image protocol: %r\r\n", Status);
         return Status;
     }
+    
+    Print(L"[DEBUG] Loaded image protocol OK!\r\n");
+    Print(L"[DEBUG] Getting file system protocol...\r\n");
+    
+    // Now get file system from the device handle
+    Status = uefi_call_wrapper(SystemTable->BootServices->HandleProtocol, 3,
+        LoadedImage->DeviceHandle,
+        &FileSystemProtocol,
+        (void**)&FileSystem
+    );
+    if (EFI_ERROR(Status)) {
+        Print(L"[ERROR] Failed to get file system protocol: %r\r\n", Status);
+        return Status;
+    }
+    
+    Print(L"[DEBUG] Opening volume...\r\n");
     
     Status = FileSystem->OpenVolume(FileSystem, &Root);
     if (EFI_ERROR(Status)) {
-        Print(L"Failed to open volume\r\n");
+        Print(L"[ERROR] Failed to open volume: %r\r\n", Status);
         return Status;
     }
+    
+    Print(L"[DEBUG] Volume opened successfully!\r\n");
     
     // Open checkpoint file
     Status = Root->Open(Root, &File, checkpoint_path, EFI_FILE_MODE_READ, 0);
@@ -598,8 +622,8 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     
     Print(L"[DEBUG] Loading model from stories15M.bin...\r\n");
     
-    // Load model
-    EFI_STATUS Status = load_model(ImageHandle, &transformer, L"stories15M.bin");
+    // Load model (pass SystemTable)
+    EFI_STATUS Status = load_model(ImageHandle, SystemTable, &transformer, L"stories15M.bin");
     if (EFI_ERROR(Status)) {
         Print(L"[ERROR] Failed to load model: %r\r\n", Status);
         Print(L"Press any key to exit...\r\n");

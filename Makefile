@@ -19,12 +19,14 @@ LIBS = -lefi -lgnuefi
 TARGET = llm.efi
 CHATBOT = chatbot.efi
 HELLO = hello.efi
+LLAMA2 = llama2.efi
 OBJ = llm_efi.o
 CHATBOT_OBJ = llm_chatbot.o
 HELLO_OBJ = hello_efi.o
+LLAMA2_OBJ = llama2_efi.o
 
 # Default target
-all: $(TARGET) $(CHATBOT) $(HELLO)
+all: $(TARGET) $(CHATBOT) $(HELLO) $(LLAMA2)
 
 # Compile C to object file
 $(OBJ): llm_efi.c
@@ -68,9 +70,24 @@ $(HELLO): hello.so
 	        -j .dynsym -j .rel -j .rela -j .reloc \
 	        --target=efi-app-$(ARCH) hello.so $(HELLO)
 
+# Compile llama2_efi (95% Karpathy's code)
+$(LLAMA2_OBJ): llama2_efi.c
+	$(CC) $(CFLAGS) -c llama2_efi.c -o $(LLAMA2_OBJ)
+
+# Link llama2_efi
+llama2.so: $(LLAMA2_OBJ)
+	ld $(LDFLAGS) $(LLAMA2_OBJ) -o llama2.so $(LIBS)
+
+# Convert llama2 to EFI
+$(LLAMA2): llama2.so
+	objcopy -j .text -j .sdata -j .data -j .dynamic \
+	        -j .dynsym -j .rel -j .rela -j .reloc \
+	        --target=efi-app-$(ARCH) llama2.so $(LLAMA2)
+
 # Clean build artifacts
 clean:
-	rm -f $(OBJ) llm.so $(TARGET) $(CHATBOT_OBJ) chatbot.so $(CHATBOT) $(HELLO_OBJ) hello.so $(HELLO)
+	rm -f $(OBJ) llm.so $(TARGET) $(CHATBOT_OBJ) chatbot.so $(CHATBOT) \
+	      $(HELLO_OBJ) hello.so $(HELLO) $(LLAMA2_OBJ) llama2.so $(LLAMA2)
 
 # Create bootable disk image with chatbot
 disk: $(CHATBOT)
@@ -100,6 +117,26 @@ test-hello: hello-disk
 	                   -m 256M \
 	                   -serial mon:stdio
 
+# Create disk image with llama2 (stories15M)
+llama2-disk: $(LLAMA2)
+	@echo "Creating EFI disk image with LLaMA2..."
+	dd if=/dev/zero of=llama2-disk.img bs=1M count=128
+	mkfs.fat -F32 llama2-disk.img
+	mmd -i llama2-disk.img ::/EFI
+	mmd -i llama2-disk.img ::/EFI/BOOT
+	mcopy -i llama2-disk.img $(LLAMA2) ::/EFI/BOOT/BOOTX64.EFI
+	mcopy -i llama2-disk.img stories15M.bin ::/
+	mcopy -i llama2-disk.img tokenizer.bin ::/
+	@echo "✓ Disk image created: llama2-disk.img (15M params)"
+
+# Test llama2 in QEMU
+test-llama2: llama2-disk
+	@echo "🚀 Testing LLaMA2 (stories15M) in QEMU..."
+	qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd \
+	                   -drive format=raw,file=llama2-disk.img \
+	                   -m 512M \
+	                   -serial mon:stdio
+
 # Run in QEMU
 run: disk
 	qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd \
@@ -107,4 +144,4 @@ run: disk
 	                   -m 512M \
 	                   -serial mon:stdio
 
-.PHONY: all clean disk run
+.PHONY: all clean disk run test-hello llama2-disk test-llama2

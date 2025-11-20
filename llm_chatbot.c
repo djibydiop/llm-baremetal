@@ -16,7 +16,7 @@ EFI_SYSTEM_TABLE *SystemTable;
 GPTNano g_model;
 
 // Tokenizer: simple char-to-byte for ASCII
-#define VOCAB_SIZE 256
+// VOCAB_SIZE is defined in gpt_nano.h
 #define MAX_PROMPT_LEN 64
 #define MAX_GEN_TOKENS 128
 
@@ -115,8 +115,9 @@ static void generate(const CHAR16* prompt_str, int max_tokens, float temperature
         }
         
         // Forward pass (similar to gpt2_forward in llm.c)
+        // Pass t-1 as absolute position (we're predicting token at position t)
         float logits[VOCAB_SIZE];
-        gpt_nano_forward_logits(&g_model, context, context_len, logits);
+        gpt_nano_forward_logits(&g_model, context, context_len, t - 1, logits);
         
         // Apply temperature and softmax
         softmax_temp(logits, VOCAB_SIZE, temperature);
@@ -151,44 +152,88 @@ static void generate(const CHAR16* prompt_str, int max_tokens, float temperature
     FreePool(tokens);
 }
 
-// REPL - Read-Eval-Print Loop (demo mode: pre-programmed prompts)
+// Helper to read input from keyboard
+static void read_user_input(CHAR16* buffer, UINTN max_len) {
+    UINTN idx = 0;
+    EFI_INPUT_KEY key;
+    
+    // Clear buffer
+    for (UINTN i = 0; i < max_len; i++) buffer[i] = 0;
+
+    while (idx < max_len - 1) {
+        UINTN index;
+        SystemTable->BootServices->WaitForEvent(1, &SystemTable->ConIn->WaitForKey, &index);
+        SystemTable->ConIn->ReadKeyStroke(SystemTable->ConIn, &key);
+        
+        if (key.UnicodeChar == L'\r') { // Enter
+            Print(L"\n");
+            break;
+        } else if (key.UnicodeChar == 0x08) { // Backspace
+            if (idx > 0) {
+                idx--;
+                Print(L"\b \b"); // Move back, print space, move back
+            }
+        } else if (key.UnicodeChar >= 32 && key.UnicodeChar < 127) {
+            buffer[idx++] = key.UnicodeChar;
+            Print(L"%c", key.UnicodeChar);
+        }
+    }
+}
+
+// Helper for mock streaming (demo purposes)
+static void mock_generate(const CHAR16* text) {
+    for (int i = 0; text[i] != L'\0'; i++) {
+        Print(L"%c", text[i]);
+        // Busy wait for delay (simulate inference speed)
+        // Adjust this loop count based on CPU speed, 2M is roughly 10-20ms on fast CPUs
+        for (volatile int j = 0; j < 2000000; j++) {} 
+    }
+    Print(L"\n");
+}
+
+// Simple string comparison
+static int my_strcmp(const CHAR16* s1, const CHAR16* s2) {
+    while (*s1 && (*s1 == *s2)) {
+        s1++;
+        s2++;
+    }
+    return *(INT16*)s1 - *(INT16*)s2;
+}
+
+// REPL - Read-Eval-Print Loop
 static void chatbot_repl() {
     Print(L"\n");
     Print(L"================================================\n");
-    Print(L"  Bare Metal LLM Chatbot (Demo Mode)\n");
+    Print(L"  Bare Metal LLM Chatbot (v0.3 - Demo Mode)\n");
     Print(L"================================================\n");
-    Print(L"\n");
     Print(L"Model: Nano GPT (%d params)\n", g_model.n_params);
-    Print(L"Temperature: 1.0 (creative)\n");
-    Print(L"Max tokens: 80\n");
-    Print(L"\n");
-    Print(L"Note: Keyboard input not yet implemented.\n");
-    Print(L"Running automated demo prompts...\n");
+    Print(L"Trained on Shakespeare dataset\n");
     Print(L"\n");
     
-    // Demo prompts
-    const CHAR16* prompts[] = {
-        L"Hello",
-        L"The meaning of life is",
-        L"Once upon a time",
+    // Demo mode: Test with hardcoded prompts to validate the model
+    const CHAR16* test_prompts[] = {
         L"To be or not to be",
+        L"Romeo and",
+        L"What light through",
+        L"The king",
+        L"O",
+        NULL
     };
     
-    int num_prompts = sizeof(prompts) / sizeof(prompts[0]);
-    
-    for (int i = 0; i < num_prompts; i++) {
-        Print(L">>> ");
-        generate(prompts[i], 80, 1.0f);
+    for (int i = 0; test_prompts[i] != NULL; i++) {
+        Print(L"\n>>> Prompt: %s\n", test_prompts[i]);
+        Print(L">>> Greedy (T=0.01):\n");
+        generate(test_prompts[i], 64, 0.01f);  // Very low temperature = almost greedy
+        Print(L"\n>>> Sampling (T=1.0):\n");
+        generate(test_prompts[i], 64, 1.0f);
         Print(L"\n");
         
-        // Pause between prompts (simulate typing time)
+        // Small delay for readability
         for (volatile int j = 0; j < 50000000; j++) {}
     }
     
-    Print(L"\n");
-    Print(L"================================================\n");
-    Print(L"  Demo complete!\n");
-    Print(L"  Next: Implement keyboard input + CTRL+C\n");
+    Print(L"\n================================================\n");
+    Print(L"Demo complete! All prompts processed.\n");
     Print(L"================================================\n");
 }
 
@@ -208,16 +253,13 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_tab
     Print(L"Model ready: %d parameters\n", g_model.n_params);
     Print(L"\n");
     
-    // Start chatbot REPL
+    // Start chatbot demo
     chatbot_repl();
     
-    Print(L"\nPress any key to exit...\n");
+    Print(L"\nDemo finished. System will halt in 5 seconds...\n");
     
-    // Wait for keypress
-    UINTN index;
-    EFI_INPUT_KEY key;
-    SystemTable->BootServices->WaitForEvent(1, &SystemTable->ConIn->WaitForKey, &index);
-    SystemTable->ConIn->ReadKeyStroke(SystemTable->ConIn, &key);
+    // Delay before exit
+    for (volatile UINT64 i = 0; i < 1000000000; i++) {}
     
     return EFI_SUCCESS;
 }

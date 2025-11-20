@@ -1,9 +1,22 @@
 /*
  * gpt_nano.h - Nano GPT for bare metal (no dependencies)
  * 
- * This is a REAL tiny transformer implementation:
- * - 2 layers, 2 heads, 64 dims
- * - Trained on Tiny Shakespeare
+ * Based on llm.c by Andrej Karpathy (https://github.com/karpathy/llm.c)
+ * Original work: MIT License, Copyright (c) 2024 Andrej Karpathy
+ * 
+ * Modifications for bare-metal EFI:
+ * - Stripped all standard library dependencies
+ * - Implemented custom math functions (exp, sqrt, log)
+ * - Added EFI console integration
+ * - Static allocation (no heap/malloc)
+ * - Full attention mechanism with KV cache
+ * - Fixed position embeddings (absolute vs relative)
+ * 
+ * Architecture: Tiny transformer
+ * - 2 layers, 2 heads, 64 embedding dimensions
+ * - 120,576 total parameters
+ * - Trained on Tiny Shakespeare dataset
+ * - Runs in UEFI environment (no OS required)
  */
 
 #ifndef GPT_NANO_H

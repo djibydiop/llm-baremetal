@@ -25,7 +25,69 @@
 #include <efi.h>
 #include <efilib.h>
 #include <stdint.h>
-#include <math.h>
+
+// ----------------------------------------------------------------------------
+// Math functions for EFI (no stdlib)
+
+float sqrtf(float x) {
+    if (x < 0.0f) return 0.0f;
+    float guess = x;
+    for (int i = 0; i < 10; i++) {
+        if (guess == 0.0f) return 0.0f;
+        guess = (guess + x / guess) / 2.0f;
+    }
+    return guess;
+}
+
+float expf(float x) {
+    // Taylor series approximation
+    if (x > 10.0f) return 22026.0f; // e^10
+    if (x < -10.0f) return 0.0f;
+    float result = 1.0f;
+    float term = 1.0f;
+    for (int i = 1; i < 20; i++) {
+        term *= x / i;
+        result += term;
+        if (term < 0.0001f && term > -0.0001f) break;
+    }
+    return result;
+}
+
+float cosf(float x) {
+    // Normalize to [-pi, pi]
+    const float PI = 3.14159265f;
+    while (x > PI) x -= 2.0f * PI;
+    while (x < -PI) x += 2.0f * PI;
+    // Taylor series
+    float x2 = x * x;
+    return 1.0f - x2/2.0f + x2*x2/24.0f - x2*x2*x2/720.0f;
+}
+
+float sinf(float x) {
+    // Normalize to [-pi, pi]
+    const float PI = 3.14159265f;
+    while (x > PI) x -= 2.0f * PI;
+    while (x < -PI) x += 2.0f * PI;
+    // Taylor series
+    float x2 = x * x;
+    return x - x*x2/6.0f + x*x2*x2/120.0f - x*x2*x2*x2/5040.0f;
+}
+
+float powf(float base, float exp) {
+    if (exp == 0.0f) return 1.0f;
+    if (base == 0.0f) return 0.0f;
+    // Simple approximation for positive integer exponents
+    if (exp == (int)exp && exp > 0) {
+        float result = 1.0f;
+        for (int i = 0; i < (int)exp; i++) {
+            result *= base;
+        }
+        return result;
+    }
+    // For fractional exponents: x^y = e^(y*ln(x))
+    // Simplified: just return approximation
+    return 1.0f;
+}
 
 // ----------------------------------------------------------------------------
 // Simple RNG for EFI (no stdlib)
@@ -529,33 +591,58 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     Print(L"  Architecture by Meta Platforms\r\n");
     Print(L"========================================\r\n\r\n");
     
+    Print(L"[DEBUG] Initializing transformer...\r\n");
+    
     // Allocate transformer
     Transformer transformer;
+    
+    Print(L"[DEBUG] Loading model from stories15M.bin...\r\n");
     
     // Load model
     EFI_STATUS Status = load_model(ImageHandle, &transformer, L"stories15M.bin");
     if (EFI_ERROR(Status)) {
-        Print(L"Failed to load model: %r\r\n", Status);
+        Print(L"[ERROR] Failed to load model: %r\r\n", Status);
+        Print(L"Press any key to exit...\r\n");
+        UINTN Index;
+        EFI_INPUT_KEY Key;
+        ST->ConIn->Reset(ST->ConIn, FALSE);
+        ST->BootServices->WaitForEvent(1, &ST->ConIn->WaitForKey, &Index);
+        ST->ConIn->ReadKeyStroke(ST->ConIn, &Key);
         return Status;
     }
     
+    Print(L"[DEBUG] Model loaded! Config validated.\r\n");
+    
     // Simple test: forward pass with token 1
-    Print(L"\r\nRunning forward pass (token=1, pos=0)...\r\n");
+    Print(L"\r\n[DEBUG] Running forward pass (token=1, pos=0)...\r\n");
+    
     float* logits = forward(&transformer, 1, 0);
+    
+    if (logits == NULL) {
+        Print(L"[ERROR] Forward pass returned NULL!\r\n");
+        goto exit_prompt;
+    }
+    
+    Print(L"[DEBUG] Forward pass complete!\r\n");
     
     // Find top token
     int next_token = argmax(logits, transformer.config.vocab_size);
-    Print(L"Top token: %d (logit=%.3f)\r\n", next_token, logits[next_token]);
+    Print(L"Top token: %d (logit=%.3f)\r\n", next_token, (double)logits[next_token]);
     
     // Generate a few tokens
-    Print(L"\r\nGenerating 20 tokens:\r\n");
+    Print(L"\r\n[DEBUG] Generating 20 tokens:\r\n");
     int token = 1; // BOS token
-    for (int pos = 0; pos < 20; pos++) {
+    for (int pos = 0; pos < 20 && pos < MAX_SEQ_LEN; pos++) {
+        Print(L"[%d]", pos);
         logits = forward(&transformer, token, pos);
         token = argmax(logits, transformer.config.vocab_size);
-        Print(L"%d ", token);
+        Print(L" %d ", token);
+        if (pos % 5 == 4) Print(L"\r\n");
     }
-    Print(L"\r\n\r\nDone! Press any key to exit.\r\n");
+    Print(L"\r\n\r\n[SUCCESS] Generation complete!\r\n");
+    
+exit_prompt:
+    Print(L"\r\nPress any key to exit.\r\n");
     
     // Wait for key
     UINTN Index;

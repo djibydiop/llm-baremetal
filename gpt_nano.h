@@ -157,8 +157,60 @@ static void gpt_nano_init(GPTNano* model) {
                       sizeof(LNFW)/sizeof(float) + sizeof(LNFB)/sizeof(float);
 }
 
+// KV Cache for attention (shared across all calls)
+// Layer 0 and 1, each stores K and V for all positions in context
+static float kv_cache[N_LAYER][2][BLOCK_SIZE][N_EMBD] __attribute__((aligned(16)));
+static int kv_cache_len = 0;  // Current length of cached KV
+
+// Helper: Build KV cache for all previous tokens in context
+static void build_kv_cache(GPTNano* model, UINT8* context, int context_len) {
+    if(context_len == 0) return;
+    
+    // For each position in context (except last which we'll process in main forward)
+    for(int pos=0; pos<context_len-1; pos++) {
+        int token = context[pos];
+        
+        // Embedding
+        float x[N_EMBD];
+        for(int i=0; i<N_EMBD; i++) {
+            x[i] = model->token_embedding[token * N_EMBD + i] + 
+                   model->position_embedding[pos * N_EMBD + i];
+        }
+        
+        // Process through layers
+        for(int l=0; l<N_LAYER; l++) {
+            float residual[N_EMBD];
+            for(int i=0; i<N_EMBD; i++) residual[i] = x[i];
+            
+            // LN1
+            layer_norm(x, 
+                       model->ln1_gamma + l * N_EMBD, 
+                       model->ln1_beta + l * N_EMBD, 
+                       N_EMBD);
+            
+            // QKV
+            float qkv[3 * N_EMBD];
+            matmul(qkv, x, 
+                   model->qkv_weight + l * N_EMBD * 3 * N_EMBD, 
+                   model->qkv_bias + l * 3 * N_EMBD, 
+                   N_EMBD, 3 * N_EMBD);
+            
+            // Extract and cache K, V
+            for(int i=0; i<N_EMBD; i++) {
+                kv_cache[l][0][pos][i] = qkv[N_EMBD + i];      // K
+                kv_cache[l][1][pos][i] = qkv[2 * N_EMBD + i];  // V
+            }
+            
+            // Skip attention output since we only need cache
+            // Just pass through with residual for next layer
+            for(int i=0; i<N_EMBD; i++) x[i] = residual[i];
+        }
+    }
+}
+
 // Forward pass that returns logits (for sampling)
 // abs_pos: absolute position in the sequence (for positional embedding)
+// is_first_token: if true, rebuild KV cache from scratch
 static void gpt_nano_forward_logits(GPTNano* model, UINT8* context, int context_len, int abs_pos, float* logits) {
     if (context_len == 0 || context_len > BLOCK_SIZE || abs_pos >= BLOCK_SIZE) {
         // Return uniform distribution
@@ -173,6 +225,12 @@ static void gpt_nano_forward_logits(GPTNano* model, UINT8* context, int context_
     float att[N_EMBD] __attribute__((aligned(16)));
     float fch[4 * N_EMBD] __attribute__((aligned(16)));
     
+    // Build KV cache for previous tokens (if this is first token of new context)
+    // We detect this by checking if cache is empty or context changed
+    if(kv_cache_len != context_len - 1) {
+        build_kv_cache(model, context, context_len);
+    }
+    
     // Get embedding for last token with absolute position
     int last_token = context[context_len - 1];
     float x[N_EMBD];
@@ -180,6 +238,9 @@ static void gpt_nano_forward_logits(GPTNano* model, UINT8* context, int context_
         x[i] = model->token_embedding[last_token * N_EMBD + i] + 
                model->position_embedding[abs_pos * N_EMBD + i];
     }
+    
+    // Update KV cache length
+    kv_cache_len = context_len;
     
     // Layers
     for (int l = 0; l < N_LAYER; l++) {
@@ -193,16 +254,61 @@ static void gpt_nano_forward_logits(GPTNano* model, UINT8* context, int context_
                    model->ln1_beta + l * N_EMBD, 
                    N_EMBD);
         
-        // QKV projection
+        // QKV projection for current token
         matmul(qkv, x, 
                model->qkv_weight + l * N_EMBD * 3 * N_EMBD, 
                model->qkv_bias + l * 3 * N_EMBD, 
                N_EMBD, 3 * N_EMBD);
         
-        // Simple attention: just use V part
-        // (proper multi-head attention would require KV cache for context)
+        // Split into Q, K, V
+        float q[N_EMBD], k[N_EMBD], v[N_EMBD];
         for(int i=0; i<N_EMBD; i++) {
-            att[i] = qkv[2 * N_EMBD + i];  // V part
+            q[i] = qkv[i];
+            k[i] = qkv[N_EMBD + i];
+            v[i] = qkv[2 * N_EMBD + i];
+        }
+        
+        // Store K, V in cache for this position
+        int cache_pos = context_len - 1;
+        for(int i=0; i<N_EMBD; i++) {
+            kv_cache[l][0][cache_pos][i] = k[i];  // K
+            kv_cache[l][1][cache_pos][i] = v[i];  // V
+        }
+        
+        // Compute attention: Q * K^T / sqrt(d_k)
+        float scale = 1.0f / gpt_sqrt((float)(N_EMBD / N_HEAD));
+        float att_scores[BLOCK_SIZE];
+        float max_score = -1e10f;
+        
+        // Calculate attention scores with all cached K
+        for(int t=0; t<kv_cache_len; t++) {
+            float score = 0.0f;
+            for(int i=0; i<N_EMBD; i++) {
+                score += q[i] * kv_cache[l][0][t][i];
+            }
+            score *= scale;
+            att_scores[t] = score;
+            if(score > max_score) max_score = score;
+        }
+        
+        // Softmax (numerically stable with max subtraction)
+        float sum_exp = 0.0f;
+        for(int t=0; t<kv_cache_len; t++) {
+            att_scores[t] = gpt_exp(att_scores[t] - max_score);
+            sum_exp += att_scores[t];
+        }
+        for(int t=0; t<kv_cache_len; t++) {
+            att_scores[t] /= sum_exp;
+        }
+        
+        // Weighted sum with V (attention output)
+        for(int i=0; i<N_EMBD; i++) {
+            att[i] = 0.0f;
+        }
+        for(int t=0; t<kv_cache_len; t++) {
+            for(int i=0; i<N_EMBD; i++) {
+                att[i] += att_scores[t] * kv_cache[l][1][t][i];
+            }
         }
         
         // Project attention output

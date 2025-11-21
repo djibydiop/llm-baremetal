@@ -1,25 +1,13 @@
 /*
- * LLaMA2 Inference on Bare-Metal EFI (stories15M.bin - 15M parameters)
+ * LLaMA2 Inference on Bare-Metal UEFI Firmware
  * 
- * This code is 95% derived from Andrej Karpathy's llama2.c:
- * https://github.com/karpathy/llama2.c (MIT License)
+ * Runs 15M parameter transformer model directly on UEFI without OS.
+ * Based on Andrej Karpathy's llama2.c (MIT License)
+ * https://github.com/karpathy/llama2.c
  * 
- * Original Author: Andrej Karpathy (karpathy)
- * Original Work: llama2.c - Inference for Llama-2 Transformer model in pure C
- * 
- * LLaMA2 Architecture: Meta Platforms, Inc. and affiliates
  * Model: stories15M.bin (dim=288, n_layers=6, n_heads=6, seq_len=256)
  * 
- * Modifications for EFI (< 5% of code):
- * - Replaced malloc/calloc with static allocation (lines 77-106)
- * - Replaced printf/fprintf with EFI Print() (lines ~600-700)
- * - Replaced mmap with EFI file loading (lines ~800-900)
- * - Added EFI entry point (line ~974)
- * 
- * All transformer logic (lines 200-600) is UNCHANGED from Karpathy's original.
- * 
  * SPDX-License-Identifier: MIT
- * Port to EFI: Djibril Diop, November 2024
  */
 
 #include <efi.h>
@@ -176,23 +164,65 @@ typedef struct {
 #define MAX_SEQ_LEN 256
 #define MAX_VOCAB 32000
 
-// Static buffers for RunState (~1MB total)
-static float static_x[MAX_DIM];
-static float static_xb[MAX_DIM];
-static float static_xb2[MAX_DIM];
-static float static_hb[MAX_HIDDEN];
-static float static_hb2[MAX_HIDDEN];
-static float static_q[MAX_DIM];
-static float static_key_cache[MAX_LAYERS * MAX_SEQ_LEN * MAX_DIM];
-static float static_value_cache[MAX_LAYERS * MAX_SEQ_LEN * MAX_DIM];
-static float static_att[MAX_HEADS * MAX_SEQ_LEN];
-static float static_logits[MAX_VOCAB];
+// Dynamic buffers (allocated at runtime with AllocatePool to avoid huge binary)
+static float *static_x = NULL;
+static float *static_xb = NULL;
+static float *static_xb2 = NULL;
+static float *static_hb = NULL;
+static float *static_hb2 = NULL;
+static float *static_q = NULL;
+static float *static_key_cache = NULL;
+static float *static_value_cache = NULL;
+static float *static_att = NULL;
+static float *static_logits = NULL;
+static float *static_weights = NULL;
 
-// Static buffer for weight data (~16MB)
-static float static_weights[4000000]; // 16MB = 4M floats
-
-void init_run_state(RunState* s, Config* p) {
-    // Point to static arrays instead of malloc
+EFI_STATUS init_run_state(RunState* s, Config* p, EFI_BOOT_SERVICES *BS) {
+    // Allocate buffers dynamically using AllocatePool
+    EFI_STATUS Status;
+    int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
+    
+    Print(L"  Allocating x (%u bytes)...\r\n", p->dim * sizeof(float));
+    Status = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData, p->dim * sizeof(float), (void**)&static_x);
+    if (EFI_ERROR(Status)) { Print(L"[ERROR] Failed to allocate x: %r\r\n", Status); return Status; }
+    
+    Print(L"  Allocating xb (%u bytes)...\r\n", p->dim * sizeof(float));
+    Status = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData, p->dim * sizeof(float), (void**)&static_xb);
+    if (EFI_ERROR(Status)) { Print(L"[ERROR] Failed to allocate xb: %r\r\n", Status); return Status; }
+    
+    Print(L"  Allocating xb2 (%u bytes)...\r\n", p->dim * sizeof(float));
+    Status = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData, p->dim * sizeof(float), (void**)&static_xb2);
+    if (EFI_ERROR(Status)) { Print(L"[ERROR] Failed to allocate xb2: %r\r\n", Status); return Status; }
+    
+    Print(L"  Allocating hb (%u bytes)...\r\n", p->hidden_dim * sizeof(float));
+    Status = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData, p->hidden_dim * sizeof(float), (void**)&static_hb);
+    if (EFI_ERROR(Status)) { Print(L"[ERROR] Failed to allocate hb: %r\r\n", Status); return Status; }
+    
+    Print(L"  Allocating hb2 (%u bytes)...\r\n", p->hidden_dim * sizeof(float));
+    Status = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData, p->hidden_dim * sizeof(float), (void**)&static_hb2);
+    if (EFI_ERROR(Status)) { Print(L"[ERROR] Failed to allocate hb2: %r\r\n", Status); return Status; }
+    
+    Print(L"  Allocating q (%u bytes)...\r\n", p->dim * sizeof(float));
+    Status = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData, p->dim * sizeof(float), (void**)&static_q);
+    if (EFI_ERROR(Status)) { Print(L"[ERROR] Failed to allocate q: %r\r\n", Status); return Status; }
+    
+    Print(L"  Allocating key_cache (%u bytes)...\r\n", p->n_layers * p->seq_len * kv_dim * sizeof(float));
+    Status = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData, p->n_layers * p->seq_len * kv_dim * sizeof(float), (void**)&static_key_cache);
+    if (EFI_ERROR(Status)) { Print(L"[ERROR] Failed to allocate key_cache: %r\r\n", Status); return Status; }
+    
+    Print(L"  Allocating value_cache (%u bytes)...\r\n", p->n_layers * p->seq_len * kv_dim * sizeof(float));
+    Status = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData, p->n_layers * p->seq_len * kv_dim * sizeof(float), (void**)&static_value_cache);
+    if (EFI_ERROR(Status)) { Print(L"[ERROR] Failed to allocate value_cache: %r\r\n", Status); return Status; }
+    
+    Print(L"  Allocating att (%u bytes)...\r\n", p->n_heads * p->seq_len * sizeof(float));
+    Status = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData, p->n_heads * p->seq_len * sizeof(float), (void**)&static_att);
+    if (EFI_ERROR(Status)) { Print(L"[ERROR] Failed to allocate att: %r\r\n", Status); return Status; }
+    
+    Print(L"  Allocating logits (%u bytes)...\r\n", p->vocab_size * sizeof(float));
+    Status = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData, p->vocab_size * sizeof(float), (void**)&static_logits);
+    if (EFI_ERROR(Status)) { Print(L"[ERROR] Failed to allocate logits: %r\r\n", Status); return Status; }
+    
+    // Point RunState to allocated buffers
     s->x = static_x;
     s->xb = static_xb;
     s->xb2 = static_xb2;
@@ -204,27 +234,7 @@ void init_run_state(RunState* s, Config* p) {
     s->att = static_att;
     s->logits = static_logits;
     
-    // Zero out buffers
-    for (int i = 0; i < MAX_DIM; i++) {
-        s->x[i] = 0.0f;
-        s->xb[i] = 0.0f;
-        s->xb2[i] = 0.0f;
-        s->q[i] = 0.0f;
-    }
-    for (int i = 0; i < MAX_HIDDEN; i++) {
-        s->hb[i] = 0.0f;
-        s->hb2[i] = 0.0f;
-    }
-    for (int i = 0; i < MAX_LAYERS * MAX_SEQ_LEN * MAX_DIM; i++) {
-        s->key_cache[i] = 0.0f;
-        s->value_cache[i] = 0.0f;
-    }
-    for (int i = 0; i < MAX_HEADS * MAX_SEQ_LEN; i++) {
-        s->att[i] = 0.0f;
-    }
-    for (int i = 0; i < MAX_VOCAB; i++) {
-        s->logits[i] = 0.0f;
-    }
+    return EFI_SUCCESS;
 }
 
 void memory_map_weights(TransformerWeights *w, Config* p, float* ptr, int shared_weights) {
@@ -510,7 +520,7 @@ EFI_STATUS load_model(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable, Tra
     
     Print(L"[DEBUG] Opening volume...\r\n");
     
-    Status = FileSystem->OpenVolume(FileSystem, &Root);
+    Status = uefi_call_wrapper(FileSystem->OpenVolume, 2, FileSystem, &Root);
     if (EFI_ERROR(Status)) {
         Print(L"[ERROR] Failed to open volume: %r\r\n", Status);
         return Status;
@@ -519,20 +529,24 @@ EFI_STATUS load_model(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable, Tra
     Print(L"[DEBUG] Volume opened successfully!\r\n");
     
     // Open checkpoint file
-    Status = Root->Open(Root, &File, checkpoint_path, EFI_FILE_MODE_READ, 0);
+    Print(L"[DEBUG] Opening checkpoint: %s...\r\n", checkpoint_path);
+    Status = uefi_call_wrapper(Root->Open, 5, Root, &File, checkpoint_path, EFI_FILE_MODE_READ, 0);
     if (EFI_ERROR(Status)) {
-        Print(L"Failed to open checkpoint: %s\r\n", checkpoint_path);
+        Print(L"[ERROR] Failed to open checkpoint: %s (Status: %r)\r\n", checkpoint_path, Status);
         return Status;
     }
+    Print(L"[DEBUG] Checkpoint file opened!\r\n");
     
     // Read config header (7 ints)
+    Print(L"[DEBUG] Reading config header...\r\n");
     UINTN config_size = sizeof(Config);
-    Status = File->Read(File, &config_size, &transformer->config);
+    Status = uefi_call_wrapper(File->Read, 3, File, &config_size, &transformer->config);
     if (EFI_ERROR(Status)) {
-        Print(L"Failed to read config\r\n");
-        File->Close(File);
+        Print(L"[ERROR] Failed to read config: %r\r\n", Status);
+        uefi_call_wrapper(File->Close, 1, File);
         return Status;
     }
+    Print(L"[DEBUG] Config read: %u bytes\r\n", config_size);
     
     Config* p = &transformer->config;
     Print(L"Model config: dim=%d, n_layers=%d, n_heads=%d, vocab=%d\r\n",
@@ -541,10 +555,11 @@ EFI_STATUS load_model(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable, Tra
     // Validate against static allocation limits
     if (p->dim > MAX_DIM || p->n_layers > MAX_LAYERS || 
         p->vocab_size > MAX_VOCAB || p->seq_len > MAX_SEQ_LEN) {
-        Print(L"Model too large for static allocation!\r\n");
-        File->Close(File);
+        Print(L"[ERROR] Model too large for static allocation!\r\n");
+        uefi_call_wrapper(File->Close, 1, File);
         return EFI_BUFFER_TOO_SMALL;
     }
+    Print(L"[DEBUG] Model size validation passed!\r\n");
     
     // Calculate weights size
     int shared_weights = p->vocab_size > 0 ? 1 : 0;
@@ -555,24 +570,70 @@ EFI_STATUS load_model(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable, Tra
         weights_size += sizeof(float) * p->vocab_size * p->dim; // extra for wcls
     }
     
-    // Read weights into static buffer
-    Status = File->Read(File, &weights_size, static_weights);
+    // Allocate weights buffer
+    Print(L"[DEBUG] Allocating %u bytes for weights...\r\n", weights_size);
+    Status = uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3, EfiLoaderData, weights_size, (void**)&static_weights);
     if (EFI_ERROR(Status)) {
-        Print(L"Failed to read weights\r\n");
-        File->Close(File);
+        Print(L"[ERROR] Failed to allocate weights: %r\r\n", Status);
+        uefi_call_wrapper(File->Close, 1, File);
         return Status;
     }
+    Print(L"[DEBUG] Weights buffer allocated!\r\n");
     
-    File->Close(File);
+    // Read weights into buffer in chunks to avoid EFI timeout
+    Print(L"[DEBUG] Reading weights: %u bytes...\r\n", weights_size);
+    
+    UINTN total_read = 0;
+    UINTN chunk_size = 512 * 1024; // 512 KB chunks
+    UINT8* buffer_ptr = (UINT8*)static_weights;
+    
+    while (total_read < weights_size) {
+        UINTN to_read = (weights_size - total_read > chunk_size) ? chunk_size : (weights_size - total_read);
+        UINTN read_size = to_read;
+        
+        Status = uefi_call_wrapper(File->Read, 3, File, &read_size, buffer_ptr);
+        if (EFI_ERROR(Status)) {
+            Print(L"[ERROR] Failed to read weights at offset %u: %r\r\n", total_read, Status);
+            uefi_call_wrapper(File->Close, 1, File);
+            return Status;
+        }
+        
+        if (read_size == 0) {
+            Print(L"[ERROR] Unexpected EOF at %u bytes (expected %u)\r\n", total_read, weights_size);
+            uefi_call_wrapper(File->Close, 1, File);
+            return EFI_END_OF_FILE;
+        }
+        
+        total_read += read_size;
+        buffer_ptr += read_size;
+        
+        // Progress indicator every 512KB
+        if (total_read % (512 * 1024) == 0) {
+            Print(L"  ... %u KB read\r\n", total_read / 1024);
+        }
+    }
+    
+    Print(L"[DEBUG] Weights read: %u bytes total\r\n", total_read);
+    
+    uefi_call_wrapper(File->Close, 1, File);
+    Print(L"[DEBUG] File closed.\r\n");
     
     // Map weights
+    Print(L"[DEBUG] Mapping weights...\r\n");
     transformer->data = static_weights;
     memory_map_weights(&transformer->weights, p, static_weights, shared_weights);
+    Print(L"[DEBUG] Weights mapped OK!\r\n");
     
-    // Initialize run state with static buffers
-    init_run_state(&transformer->state, p);
+    // Initialize run state with dynamic allocation
+    Print(L"[DEBUG] Initializing run state...\r\n");
+    Status = init_run_state(&transformer->state, p, SystemTable->BootServices);
+    if (EFI_ERROR(Status)) {
+        Print(L"[ERROR] Failed to initialize run state: %r\r\n", Status);
+        return Status;
+    }
+    Print(L"[DEBUG] Run state initialized OK!\r\n");
     
-    Print(L"Model loaded successfully!\r\n");
+    Print(L"[SUCCESS] Model loaded successfully!\r\n");
     return EFI_SUCCESS;
 }
 
@@ -610,9 +671,8 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     
     Print(L"\r\n");
     Print(L"========================================\r\n");
-    Print(L"  LLaMA2 Bare-Metal EFI (stories15M)\r\n");
-    Print(L"  95%% code from Andrej Karpathy\r\n");
-    Print(L"  Architecture by Meta Platforms\r\n");
+    Print(L"  LLaMA2 Bare-Metal (15M params)\r\n");
+    Print(L"  Running directly on UEFI firmware\r\n");
     Print(L"========================================\r\n\r\n");
     
     Print(L"[DEBUG] Initializing transformer...\r\n");
@@ -650,20 +710,29 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     Print(L"[DEBUG] Forward pass complete!\r\n");
     
     // Find top token
+    Print(L"[DEBUG] Finding top token (vocab_size=%d)...\r\n", transformer.config.vocab_size);
     int next_token = argmax(logits, transformer.config.vocab_size);
-    Print(L"Top token: %d (logit=%.3f)\r\n", next_token, (double)logits[next_token]);
+    Print(L"[DEBUG] Top token found: %d\r\n", next_token);
+    Print(L"[SUCCESS] First token generated: %d\r\n\r\n", next_token);
     
-    // Generate a few tokens
-    Print(L"\r\n[DEBUG] Generating 20 tokens:\r\n");
-    int token = 1; // BOS token
-    for (int pos = 0; pos < 20 && pos < MAX_SEQ_LEN; pos++) {
-        Print(L"[%d]", pos);
+    // Generate more tokens
+    Print(L"[DEBUG] Generating 10 more tokens:\r\n");
+    int token = next_token;
+    for (int pos = 1; pos <= 10; pos++) {
+        Print(L"[%d] ", pos);
+        
         logits = forward(&transformer, token, pos);
+        if (logits == NULL) {
+            Print(L"NULL! ");
+            break;
+        }
+        
         token = argmax(logits, transformer.config.vocab_size);
-        Print(L" %d ", token);
-        if (pos % 5 == 4) Print(L"\r\n");
+        Print(L"%d ", token);
+        
+        if (pos % 5 == 0) Print(L"\r\n");
     }
-    Print(L"\r\n\r\n[SUCCESS] Generation complete!\r\n");
+    Print(L"\r\n[SUCCESS] Generation complete!\r\n");
     
 exit_prompt:
     Print(L"\r\nPress any key to exit.\r\n");

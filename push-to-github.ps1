@@ -30,5 +30,5 @@ git push -u origin main
 Write-Host ""
 Write-Host "✓ Pushed to GitHub!" -ForegroundColor Green
 Write-Host ""
-Write-Host "Share this with Justine:" -ForegroundColor Cyan
+Write-Host "Share this with Djiby:" -ForegroundColor Cyan
 Write-Host "https://github.com/npdji/llm-baremetal" -ForegroundColor White

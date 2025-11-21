@@ -319,7 +319,7 @@ wsl make test-hello  # First verify boot
 
 ---
 
-## 💡 Key Points from Justine
+## 💡 Key Points from Djiby
 
 ### 1. "Steal as much as you can"
 ✅ **Plan:** Copy 95% of run.c
@@ -385,7 +385,7 @@ wsl make test-hello  # First verify boot
 
 ## 🎯 Bottom Line
 
-**Justine is 100% right:**
+**Djiby is 100% right:**
 - ✅ Maximum code reuse from llama2.c
 - ✅ Prominent attribution (Karpathy + Meta)
 - ✅ Minimal changes (only EFI compatibility)

@@ -7,7 +7,7 @@
 
 ## 🎯 Quick Start
 
-**For Reviewers**: Read `SUMMARY_FOR_JUSTINE.md` first (5 min)  
+**For Reviewers**: Read `SUMMARY.md` first (5 min)  
 **For Developers**: Read `README_LLAMA2.md` (10 min)  
 **For Building**: See `Makefile` targets below
 
@@ -27,8 +27,8 @@
 
 ### 📖 **Documentation (Read These)**
 
-#### **For Justine / Reviewers**
-- **SUMMARY_FOR_JUSTINE.md** ⭐ - Quick summary (5 min read)
+#### **For Djiby / Reviewers**
+- **SUMMARY.md** ⭐ - Quick summary (5 min read)
   - What was asked: "Use llama2.c, steal as much as you can"
   - What was built: 95% code reuse, 6 layers, 15M params
   - Win-win-win: Karpathy + Meta + Us
@@ -52,7 +52,7 @@
   - Win-win-win explained
   - Smart laziness principle
 
-- **ACTION_PLAN_JUSTINE.md** - Strategic pivot
+- **ACTION_PLAN.md** - Strategic pivot
   - Why 2 layers wasn't enough
   - Decision to use llama2.c
   - Implementation approach
@@ -68,8 +68,8 @@
   - 50% bare-metal adaptations
   - 10% AI assistant fixes
 
-- **JUSTINE_GUIDE.md** - QEMU screencast guide
-- **README_JUSTINE.md** - Quick reference
+- **GUIDE.md** - QEMU screencast guide
+- **README_QUICK.md** - Quick reference
 
 ### 🧪 **Legacy / Archive (Previous Work)**
 
@@ -138,7 +138,7 @@ qemu-system-x86_64 \
 - **Problem**: Too small, novel architecture hard to review
 
 ### Phase 2: Strategic Pivot 🎯
-- **Justine's feedback**: "2 layers isn't enough, use llama2.c"
+- **Djiby's feedback**: "2 layers isn't enough, use llama2.c"
 - **Decision**: 95% code reuse from proven implementation
 - **Philosophy**: Win-win-win (Karpathy + Meta + Us)
 
@@ -156,7 +156,7 @@ qemu-system-x86_64 \
 3. ✅ **Clear attribution** (Karpathy + Meta)
 4. ✅ **Easy to review** (~50 changed lines out of 674)
 5. ✅ **Proper documentation** (3 README files)
-6. ✅ **Win-win-win** achieved per Justine's wisdom
+6. ✅ **Win-win-win** achieved per Djiby's wisdom
 
 ---
 
@@ -225,7 +225,7 @@ uint32_t rand_efi(void) { ... }
 - **Djibril Diop** - Bare-metal adaptations
 
 ### Inspiration
-- **Justine Tunney** - Critical feedback & strategy guidance
+- **Djiby Diop** - Critical feedback & strategy guidance
 
 ---
 
@@ -235,7 +235,7 @@ uint32_t rand_efi(void) { ... }
 
 **Recent Commits**:
 ```
-f679bfa - 📝 Summary for Justine: Mission accomplished
+f679bfa - 📝 Summary for Djiby: Mission accomplished
 0ec0afe - 📊 Status Report: LLaMA2 port COMPLETE
 dae4374 - 🚀 LLaMA2 bare-metal port COMPLETE (95% Karpathy code)
 07ebeeb - 🎯 Maximum code reuse strategy
@@ -246,7 +246,7 @@ dae4374 - 🚀 LLaMA2 bare-metal port COMPLETE (95% Karpathy code)
 ## 📖 Recommended Reading Order
 
 ### New Reviewers
-1. **SUMMARY_FOR_JUSTINE.md** (5 min) - Quick overview
+1. **SUMMARY.md** (5 min) - Quick overview
 2. **README_LLAMA2.md** (10 min) - Full guide
 3. **llama2_efi.c** (review ~50 changed lines) - Code
 
@@ -257,7 +257,7 @@ dae4374 - 🚀 LLaMA2 bare-metal port COMPLETE (95% Karpathy code)
 
 ### Strategy/Philosophy Fans
 1. **MAXIMUM_REUSE_STRATEGY.md** - Win-win-win
-2. **ACTION_PLAN_JUSTINE.md** - Strategic pivot
+2. **ACTION_PLAN.md** - Strategic pivot
 3. **ORIGIN_STORY.md** - Project history
 
 ---
@@ -270,4 +270,4 @@ dae4374 - 🚀 LLaMA2 bare-metal port COMPLETE (95% Karpathy code)
 
 ---
 
-*"Smart people are lazy. Use proven code. Everyone wins." - Justine Tunney*
+*"Smart people are lazy. Use proven code. Everyone wins." - Djiby Diop*

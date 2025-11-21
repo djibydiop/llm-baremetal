@@ -243,7 +243,7 @@ EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* fs;
 **Old pitch:**
 > "Custom 2-layer GPT on bare-metal"
 
-**New pitch (Justine-approved):**
+**New pitch (Djiby-approved):**
 > "I ported Andrej Karpathy's llama2.c to bare-metal EFI. It runs the stories15M model - a 15 million parameter LLaMA2 with 6 layers. The port is minimal: I only changed memory allocation (malloc→static) and I/O (stdio→EFI). The transformer logic is 95% unchanged from Karpathy's original. It boots in QEMU with no operating system and generates coherent text. All code is properly attributed under MIT license."
 
 **Why this is stronger:**
@@ -258,7 +258,7 @@ EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* fs;
 
 ## 💡 Key Insights
 
-### From Justine's Feedback:
+### From Djiby's Feedback:
 
 1. **"Two layers isn't enough"**
    - Our 2 layers: inadequate for real attention
@@ -302,4 +302,4 @@ EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* fs;
 
 ---
 
-**Bottom line:** Justine is absolutely right. Let's do this the smart way: use llama2.c, keep it minimal, attribute properly, and ship something that works and is trusted. 🎯
+**Bottom line:** Djiby is absolutely right. Let's do this the smart way: use llama2.c, keep it minimal, attribute properly, and ship something that works and is trusted. 🎯

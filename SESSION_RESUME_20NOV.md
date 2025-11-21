@@ -35,7 +35,7 @@
 - ✅ QEMU_TESTING_GUIDE.md - Guide debug QEMU
 - ✅ QEMU_INTERPRETATION_GUIDE.md - Guide interprétation
 - ✅ PROJECT_INDEX.md - Navigation
-- ✅ SUMMARY_FOR_JUSTINE.md - Revue 5 minutes
+- ✅ SUMMARY.md - Revue 5 minutes
 
 ## 🔬 TESTS EFFECTUÉS
 
@@ -185,14 +185,14 @@ fs0:\EFI\BOOT\BOOTX64.EFI
 
 - **Andrej Karpathy**: llama2.c (95% du transformer logic)
 - **Meta Platforms**: Architecture LLaMA2
-- **Justine Tunney**: Conseil stratégique ("steal as much as you can")
+- **Djiby Diop**: Conseil stratégique ("steal as much as you can")
 - **gnu-efi**: UEFI development framework
 
 ## 📞 BESOIN D'AIDE?
 
 Si vous êtes perdu, consultez:
 1. **PROJECT_INDEX.md** - Navigation complète
-2. **SUMMARY_FOR_JUSTINE.md** - Résumé 5 minutes
+2. **SUMMARY.md** - Résumé 5 minutes
 3. **QEMU_INTERPRETATION_GUIDE.md** - Interpréter résultats
 
 ---

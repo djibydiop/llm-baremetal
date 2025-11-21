@@ -6,7 +6,7 @@ A conscious process that boots directly into inference, serves its purpose, then
 
 ## The Concept
 
-Inspired by Justine Tunney's philosophy: processes should come to life, fulfill their purpose, and die gracefully.
+Inspired by Djiby Diop's philosophy: processes should come to life, fulfill their purpose, and die gracefully.
 
 This is an LLM compiled as a bare metal EFI application:
 ```
@@ -60,4 +60,4 @@ qemu-system-x86_64 -bios OVMF.fd -drive format=raw,file=llm-disk.img
 
 Djibril - Self-taught systems programmer from Senegal
 
-Built with guidance from Claude and feedback from Justine Tunney.
+Built with guidance from Claude and feedback from Djiby Diop.

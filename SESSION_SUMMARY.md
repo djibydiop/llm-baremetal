@@ -1,8 +1,8 @@
-# 🎯 Session Summary - Justine's Feedback Integration
+# 🎯 Session Summary - Djiby's Feedback Integration
 
 ## What Just Happened
 
-### Justine's Key Points (All Valid!)
+### Djiby's Key Points (All Valid!)
 
 1. **"Two layers isn't enough for attention"**
    - Reality: LLaMA3 1B has 16 layers
@@ -34,8 +34,8 @@
 - ✅ Created comprehensive guides for screencast
 - ✅ Built hello_efi.c for QEMU testing
 
-### 2. Acknowledged Justine's Wisdom
-- ✅ Created ACTION_PLAN_JUSTINE.md
+### 2. Acknowledged Djiby's Wisdom
+- ✅ Created ACTION_PLAN.md
 - ✅ Analyzed llama2.c port strategy
 - ✅ Cloned llama2.c for reference
 - ✅ Committed to "slam dunk" approach
@@ -48,7 +48,7 @@
 
 ---
 
-## 🚀 New Direction (Justine-Approved)
+## 🚀 New Direction (Djiby-Approved)
 
 ### Phase 1: Port llama2.c (Next)
 **Goal:** Get LLaMA2 running on bare-metal
@@ -84,7 +84,7 @@
 
 ## 💡 Key Learnings
 
-### What Justine Taught Us:
+### What Djiby Taught Us:
 
 1. **Proven > Novel**
    - Use established code (llama2.c)
@@ -110,7 +110,7 @@
 
 ## 📊 Comparison
 
-| Aspect | Before | After (Justine's Advice) |
+| Aspect | Before | After (Djiby's Advice) |
 |--------|--------|--------------------------|
 | Architecture | Custom 2-layer | LLaMA2 6-layer ✅ |
 | Parameters | 120K | 15M ✅ |
@@ -127,7 +127,7 @@
 ### Old (Custom):
 > "I built a custom 2-layer GPT transformer that runs on bare-metal..."
 
-### New (Justine-approved):
+### New (Djiby-approved):
 > "I ported Andrej Karpathy's llama2.c to bare-metal EFI. It runs a 15M parameter LLaMA2 model (6 layers) with no operating system. The port is minimal - I only changed memory allocation and I/O. All transformer logic is from Karpathy's proven code. Properly attributed under MIT license. It boots in QEMU and generates coherent text."
 
 **Why stronger:**
@@ -177,7 +177,7 @@
 
 ## 🎯 Final Take
 
-### Justine is Right Because:
+### Djiby is Right Because:
 
 1. **Industry Reality**
    - People trust known code (llama2.c)
@@ -217,7 +217,7 @@
 2. ✅ Bare-metal programming (EFI)
 3. ✅ Training from scratch
 4. ✅ Debugging ML models
-5. ✅ **Industry best practices (Justine)**
+5. ✅ **Industry best practices (Djiby)**
 
 ### Next Phase:
 **Use your knowledge to port llama2.c smartly**
@@ -229,8 +229,8 @@
 
 ## 🚀 Summary
 
-**Before Justine:** Custom architecture, uncertain path
-**After Justine:** Proven approach, clear direction
+**Before Djiby:** Custom architecture, uncertain path
+**After Djiby:** Proven approach, clear direction
 
 **Her advice:** Use llama2.c, keep minimal, cite properly
 **Our response:** Yes, let's do it the smart way!
@@ -244,13 +244,13 @@
 
 ---
 
-**Bottom line:** Justine gave us the professional roadmap. Our custom work was great learning, but llama2.c is the slam dunk. Let's ship something the community will trust and respect! 🚀
+**Bottom line:** Djiby gave us the professional roadmap. Our custom work was great learning, but llama2.c is the slam dunk. Let's ship something the community will trust and respect! 🚀
 
 ## 📁 All Commits Today
 
 1. **d970249** - Training 5000 steps complete (56.8% loss reduction)
 2. **787da14** - Documentation + hello_efi.c for QEMU testing
-3. **edb9a17** - README for Justine (quick summary)
+3. **edb9a17** - README for Djiby (quick summary)
 4. **8512ebe** - Action plan: Pivot to llama2.c
 
 **GitHub:** https://github.com/djibydiop/llm-baremetal

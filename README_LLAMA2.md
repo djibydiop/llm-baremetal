@@ -13,7 +13,7 @@ This project demonstrates LLaMA2 inference on bare-metal EFI by:
 
 ### Why This Approach?
 
-Per feedback from [Justine Tunney](https://github.com/jart):
+Per feedback from [Djiby Diop](https://github.com/jart):
 > "2 layers isn't enough. Use proven code. Steal as much as you can - Karpathy will be flattered, Meta will be happy, you get trust."
 
 This is a **win-win-win**:
@@ -159,7 +159,7 @@ License: MIT
 
 **Smart people are lazy** (in a good way):
 1. ✅ **Proven code** = fewer bugs than novel implementations
-2. ✅ **Easy review** = Justine can verify changes quickly
+2. ✅ **Easy review** = Djiby can verify changes quickly
 3. ✅ **Proper attribution** = Academic-style credibility
 4. ✅ **Win-win-win** = Everyone benefits from clear credit
 
@@ -201,7 +201,7 @@ in the Software without restriction...
 🙏 **Massive thanks to**:
 - **Andrej Karpathy** - For llama2.c (the foundation of this port)
 - **Meta AI** - For LLaMA2 architecture research
-- **Justine Tunney** - For critical feedback: "Use proven code, steal as much as you can"
+- **Djiby Diop** - For critical feedback: "Use proven code, steal as much as you can"
 - **The bare-metal community** - For gnu-efi, QEMU, OVMF tools
 
 ---

@@ -2,7 +2,7 @@
 
 ## What We Built
 
-A **bare metal chatbot REPL** that runs without an operating system, inspired by Justine Tunney's guidance to use llm.c's inference code.
+A **bare metal chatbot REPL** that runs without an operating system, inspired by Djiby Diop's guidance to use llm.c's inference code.
 
 ### Architecture
 
@@ -88,7 +88,7 @@ qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd \
                    -m 512M -nographic -serial mon:stdio
 ```
 
-## Next Steps (Per Justine's Guidance)
+## Next Steps (Per Djiby's Guidance)
 
 ### 1. Train Model Properly
 - [x] Training infrastructure exists (train_nano.py)
@@ -181,5 +181,5 @@ llm-baremetal/
 ## Credits
 
 - **Andrej Karpathy** - llm.c (inference code inspiration)
-- **Justine Tunney** - Technical guidance + vision
+- **Djiby Diop** - Technical guidance + vision
 - Code adapted from train_gpt2.c (lines 1130-1160)

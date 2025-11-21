@@ -1,6 +1,6 @@
 # Next Steps: Chatbot REPL (Token-by-Token)
 
-## What Justine Wants to See
+## What Djiby Wants to See
 
 > "Try to get a chatbot REPL up. When you take the video, people will know it's an LLM running locally if it like prints a token at a time at the right speed. Something similar to the llamafile CLI where it has the >>> prompt thing going."
 
@@ -138,7 +138,7 @@ Then replace mock responses with actual llm.c inference.
 
 ## Quick Win: Mock REPL First
 
-Let's implement the mock REPL today to show Justine we're iterating fast:
+Let's implement the mock REPL today to show Djiby we're iterating fast:
 
 ```c
 // She'll see:

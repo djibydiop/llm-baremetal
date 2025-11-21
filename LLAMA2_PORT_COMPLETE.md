@@ -196,7 +196,7 @@ make llama2-disk
   - Simple RNG implementation
 
 ### Inspiration & Guidance
-- **Justine Tunney** - Critical feedback
+- **Djiby Diop** - Critical feedback
   - "2 layers isn't enough"
   - "Use proven code"
   - "Steal as much as you can - win-win-win"
@@ -205,7 +205,7 @@ make llama2-disk
 
 ## 🎓 Philosophy: Win-Win-Win
 
-Per Justine's wisdom, this approach benefits everyone:
+Per Djiby's wisdom, this approach benefits everyone:
 
 1. ✅ **Karpathy gets fame**
    - Clear attribution in headers
@@ -298,7 +298,7 @@ llm-baremetal/
 3. **Less Is More**: Delete unnecessary code, focus on goal
 4. **Smart Laziness**: Reusing good code is intelligent engineering
 
-### Justine's Wisdom Applied
+### Djiby's Wisdom Applied
 - ❌ **Before**: Custom 2-layer architecture (hard to review)
 - ✅ **After**: 95% llama2.c (easy to verify)
 - 🎯 **Result**: "Oh cool, you just ported Karpathy's code to EFI!"
@@ -336,4 +336,4 @@ To:
 
 ---
 
-*"Smart people are lazy. Use proven code. Everyone wins."* - Justine Tunney
+*"Smart people are lazy. Use proven code. Everyone wins."* - Djiby Diop

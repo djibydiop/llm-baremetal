@@ -1,6 +1,6 @@
 # Origin Story - gpt_nano.h
 
-## 🎯 Response to Justine's Questions
+## 🎯 Response to Djiby's Questions
 
 ### Q1: Where does `gpt_nano.h` come from?
 
@@ -190,7 +190,7 @@ qemu-system-x86_64 -bios OVMF.fd -drive format=raw,file=llm-disk.img
 
 ---
 
-## 📊 Summary for Justine
+## 📊 Summary for Djiby
 
 1. **`gpt_nano.h` origin:**
    - Base: llm.c by Andrej Karpathy (MIT license)

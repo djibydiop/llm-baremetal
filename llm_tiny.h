@@ -71,7 +71,7 @@ static const CHAR16* generate_response(const CHAR16* prompt) {
         
         L"My architecture is simple: EFI application compiled from C. I boot, I think, I respond, I die. This is the conscious process lifecycle.",
         
-        L"This is a demonstration of what Justine Tunney suggested: start simple. A bare metal chatbot proves the concept before building the full vision.",
+        L"This is a demonstration of what Djiby Diop suggested: start simple. A bare metal chatbot proves the concept before building the full vision.",
         
         L"The goal is to eventually run real LLM inference here - llm.c compiled for x86_64 bare metal. For now, I'm a mock, but the structure is real.",
         

@@ -61,20 +61,40 @@ float sinf(float x) {
     return x - x*x2/6.0f + x*x2*x2/120.0f - x*x2*x2*x2/5040.0f;
 }
 
+// Simple natural log approximation
+float logf(float x) {
+    if (x <= 0.0f) return -10.0f; // Avoid log(0) or log(negative)
+    if (x == 1.0f) return 0.0f;
+    
+    // Use ln(x) = 2 * atanh((x-1)/(x+1)) for x > 0
+    // atanh(y) ≈ y + y^3/3 + y^5/5 + ...
+    float y = (x - 1.0f) / (x + 1.0f);
+    float y2 = y * y;
+    float result = y;
+    float term = y;
+    for (int i = 1; i < 10; i++) {
+        term *= y2;
+        result += term / (2.0f * i + 1.0f);
+    }
+    return 2.0f * result;
+}
+
 float powf(float base, float exp) {
     if (exp == 0.0f) return 1.0f;
     if (base == 0.0f) return 0.0f;
-    // Simple approximation for positive integer exponents
-    if (exp == (int)exp && exp > 0) {
+    if (base < 0.0f) return 1.0f; // Avoid complex numbers
+    
+    // For positive integer exponents, use multiplication
+    if (exp == (int)exp && exp > 0 && exp < 100) {
         float result = 1.0f;
         for (int i = 0; i < (int)exp; i++) {
             result *= base;
         }
         return result;
     }
-    // For fractional exponents: x^y = e^(y*ln(x))
-    // Simplified: just return approximation
-    return 1.0f;
+    
+    // For fractional/negative exponents: x^y = e^(y*ln(x))
+    return expf(exp * logf(base));
 }
 
 // ----------------------------------------------------------------------------
@@ -171,6 +191,8 @@ static float *static_xb2 = NULL;
 static float *static_hb = NULL;
 static float *static_hb2 = NULL;
 static float *static_q = NULL;
+static float *static_k = NULL;  // Fixed: was missing!
+static float *static_v = NULL;  // Fixed: was missing!
 static float *static_key_cache = NULL;
 static float *static_value_cache = NULL;
 static float *static_att = NULL;
@@ -206,6 +228,15 @@ EFI_STATUS init_run_state(RunState* s, Config* p, EFI_BOOT_SERVICES *BS) {
     Status = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData, p->dim * sizeof(float), (void**)&static_q);
     if (EFI_ERROR(Status)) { Print(L"[ERROR] Failed to allocate q: %r\r\n", Status); return Status; }
     
+    // Allocate k and v buffers (CRITICAL: these were missing!)
+    Print(L"  Allocating k (%u bytes)...\r\n", kv_dim * sizeof(float));
+    Status = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData, kv_dim * sizeof(float), (void**)&static_k);
+    if (EFI_ERROR(Status)) { Print(L"[ERROR] Failed to allocate k: %r\r\n", Status); return Status; }
+    
+    Print(L"  Allocating v (%u bytes)...\r\n", kv_dim * sizeof(float));
+    Status = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData, kv_dim * sizeof(float), (void**)&static_v);
+    if (EFI_ERROR(Status)) { Print(L"[ERROR] Failed to allocate v: %r\r\n", Status); return Status; }
+    
     Print(L"  Allocating key_cache (%u bytes)...\r\n", p->n_layers * p->seq_len * kv_dim * sizeof(float));
     Status = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData, p->n_layers * p->seq_len * kv_dim * sizeof(float), (void**)&static_key_cache);
     if (EFI_ERROR(Status)) { Print(L"[ERROR] Failed to allocate key_cache: %r\r\n", Status); return Status; }
@@ -238,6 +269,8 @@ EFI_STATUS init_run_state(RunState* s, Config* p, EFI_BOOT_SERVICES *BS) {
     s->hb = static_hb;
     s->hb2 = static_hb2;
     s->q = static_q;
+    s->k = static_k;  // Fixed: was missing!
+    s->v = static_v;  // Fixed: was missing!
     s->key_cache = static_key_cache;
     s->value_cache = static_value_cache;
     s->att = static_att;
@@ -262,6 +295,8 @@ void memory_map_weights(TransformerWeights *w, Config* p, float* ptr, int shared
     ptr += n_layers * p->dim * (p->n_kv_heads * head_size);
     w->wo = ptr;
     ptr += n_layers * (p->n_heads * head_size) * p->dim;
+    w->rms_ffn_weight = ptr;
+    ptr += n_layers * p->dim;
     w->w1 = ptr;
     ptr += n_layers * p->dim * p->hidden_dim;
     w->w2 = ptr;
@@ -339,12 +374,37 @@ float* forward(Transformer* transformer, int token, int pos) {
     for (int i = 0; i < dim; i++) {
         x[i] = content_row[i];
     }
+    
+    // Debug: Check first embedding value
+    if (pos == 0 && token == 1) {
+        int whole = (int)x[0];
+        int frac = (int)((x[0] - whole) * 1000);
+        if (frac < 0) frac = -frac;
+        Print(L"[DEBUG] First embedding value x[0] = %d.%03d\r\n", whole, frac);
+    }
 
     // forward all the layers
     for(unsigned long long l = 0; l < p->n_layers; l++) {
 
         // attention rmsnorm
+        // Debug: check weight pointer
+        if (pos == 0 && token == 1 && l == 0) {
+            float first_norm_weight = (w->rms_att_weight + l*dim)[0];
+            int whole = (int)first_norm_weight;
+            int frac = (int)((first_norm_weight - whole) * 1000);
+            if (frac < 0) frac = -frac;
+            Print(L"[DEBUG] First rms_att_weight[0] = %d.%03d\r\n", whole, frac);
+        }
+        
         rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
+        
+        // Debug: check rmsnorm output
+        if (pos == 0 && token == 1 && l == 0) {
+            int whole = (int)s->xb[0];
+            int frac = (int)((s->xb[0] - whole) * 1000);
+            if (frac < 0) frac = -frac;
+            Print(L"[DEBUG] After rmsnorm, xb[0] = %d.%03d\r\n", whole, frac);
+        }
 
         // qkv matmuls for this position
         matmul(s->q, s->xb, w->wq + l*dim*dim, dim, dim);
@@ -570,14 +630,29 @@ EFI_STATUS load_model(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable, Tra
     }
     Print(L"[DEBUG] Model size validation passed!\r\n");
     
-    // Calculate weights size
+    // Calculate weights size (all transformer weights)
     int shared_weights = p->vocab_size > 0 ? 1 : 0;
     p->vocab_size = p->vocab_size > 0 ? p->vocab_size : -p->vocab_size;
     
-    UINTN weights_size = sizeof(float) * p->vocab_size * p->dim;
+    int head_size = p->dim / p->n_heads;
+    int n_layers = p->n_layers;
+    
+    UINTN weights_size = 0;
+    weights_size += p->vocab_size * p->dim; // token_embedding_table
+    weights_size += n_layers * p->dim; // rms_att_weight
+    weights_size += n_layers * p->dim * (p->n_heads * head_size); // wq
+    weights_size += n_layers * p->dim * (p->n_kv_heads * head_size); // wk
+    weights_size += n_layers * p->dim * (p->n_kv_heads * head_size); // wv
+    weights_size += n_layers * (p->n_heads * head_size) * p->dim; // wo
+    weights_size += n_layers * p->dim; // rms_ffn_weight
+    weights_size += n_layers * p->dim * p->hidden_dim; // w1
+    weights_size += n_layers * p->hidden_dim * p->dim; // w2
+    weights_size += n_layers * p->dim * p->hidden_dim; // w3
+    weights_size += p->dim; // rms_final_weight
     if (!shared_weights) {
-        weights_size += sizeof(float) * p->vocab_size * p->dim; // extra for wcls
+        weights_size += p->vocab_size * p->dim; // wcls
     }
+    weights_size *= sizeof(float); // convert to bytes
     
     // Allocate weights buffer
     Print(L"[DEBUG] Allocating %u bytes for weights...\r\n", weights_size);
@@ -632,6 +707,13 @@ EFI_STATUS load_model(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable, Tra
     transformer->data = static_weights;
     memory_map_weights(&transformer->weights, p, static_weights, shared_weights);
     Print(L"[DEBUG] Weights mapped OK!\r\n");
+    
+    // Sanity check: print first weight value
+    float first_weight = static_weights[0];
+    int whole = (int)first_weight;
+    int frac = (int)((first_weight - whole) * 1000);
+    if (frac < 0) frac = -frac;
+    Print(L"[DEBUG] First weight value: %d.%03d\r\n", whole, frac);
     
     // Initialize run state with dynamic allocation
     Print(L"[DEBUG] Initializing run state...\r\n");
@@ -713,6 +795,8 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     Print(L"Starting with token %d (BOS)\r\n", token);
     
     for (int pos = 0; pos < steps; pos++) {
+        Print(L"[pos=%d] Running forward pass with token=%d...\r\n", pos, token);
+        
         // Forward pass
         float* logits = forward(&transformer, token, pos);
         
@@ -721,21 +805,34 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
             break;
         }
         
+        Print(L"[pos=%d] Forward pass complete, logits at %p\r\n", pos, logits);
+        
         // Debug: Show first 10 logits values
         if (pos == 0) {
             Print(L"\r\nFirst 10 logits: ");
             for (int i = 0; i < 10; i++) {
-                // Print with basic float formatting
-                int whole = (int)logits[i];
-                int frac = (int)((logits[i] - whole) * 100);
-                if (frac < 0) frac = -frac;
-                Print(L"%d.%02d ", whole, frac);
+                // Check for NaN/Inf
+                if (logits[i] != logits[i]) {
+                    Print(L"NaN ");
+                } else if (logits[i] > 1e30f) {
+                    Print(L"+Inf ");
+                } else if (logits[i] < -1e30f) {
+                    Print(L"-Inf ");
+                } else {
+                    // Print with basic float formatting
+                    int whole = (int)logits[i];
+                    int frac = (int)((logits[i] - whole) * 100);
+                    if (frac < 0) frac = -frac;
+                    Print(L"%d.%02d ", whole, frac);
+                }
             }
             Print(L"\r\n\r\n");
         }
         
         // Sample next token
+        Print(L"[pos=%d] Finding argmax over %d tokens...\r\n", pos, transformer.config.vocab_size);
         int next = argmax(logits, transformer.config.vocab_size);
+        Print(L"[pos=%d] argmax=%d\r\n", pos, next);
         
         // Print progress
         Print(L"[%d] %d ", pos, next);

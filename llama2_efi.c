@@ -679,17 +679,15 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     InitializeLib(ImageHandle, SystemTable);
     
     Print(L"\r\n");
-    Print(L"========================================\r\n");
-    Print(L"  LLaMA2 Bare-Metal (15M params)\r\n");
-    Print(L"  Running directly on UEFI firmware\r\n");
-    Print(L"========================================\r\n\r\n");
+    Print(L"LLaMA2 Bare-Metal - 15M parameter transformer\r\n");
+    Print(L"Running on UEFI firmware\r\n\r\n");
     
-    Print(L"[DEBUG] Initializing transformer...\r\n");
+    Print(L"Initializing transformer...\r\n");
     
     // Allocate transformer
     Transformer transformer;
     
-    Print(L"[DEBUG] Loading model from stories15M.bin...\r\n");
+    Print(L"Loading model from stories15M.bin...\r\n");
     
     // Load model (pass SystemTable)
     EFI_STATUS Status = load_model(ImageHandle, SystemTable, &transformer, L"stories15M.bin");
@@ -704,44 +702,49 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         return Status;
     }
     
-    Print(L"[DEBUG] Model loaded! Config validated.\r\n");
+    Print(L"Model loaded. Config validated.\r\n");
     
-    // Simple test: forward pass with token 1
-    Print(L"\r\n[DEBUG] Running forward pass (token=1, pos=0)...\r\n");
+    // Start with BOS token (beginning of sequence)
+    // For stories model, BOS is typically token 1
+    int token = 1;
+    int steps = 20;
     
-    float* logits = forward(&transformer, 1, 0);
+    Print(L"\r\nGenerating %d tokens...\r\n\r\n", steps);
+    Print(L"Starting with token %d (BOS)\r\n", token);
     
-    if (logits == NULL) {
-        Print(L"[ERROR] Forward pass returned NULL!\r\n");
-        goto exit_prompt;
-    }
-    
-    Print(L"[DEBUG] Forward pass complete!\r\n");
-    
-    // Find top token
-    Print(L"[DEBUG] Finding top token (vocab_size=%d)...\r\n", transformer.config.vocab_size);
-    int next_token = argmax(logits, transformer.config.vocab_size);
-    Print(L"[DEBUG] Top token found: %d\r\n", next_token);
-    Print(L"[SUCCESS] First token generated: %d\r\n\r\n", next_token);
-    
-    // Generate more tokens
-    Print(L"[DEBUG] Generating 10 more tokens:\r\n");
-    int token = next_token;
-    for (int pos = 1; pos <= 10; pos++) {
-        Print(L"[%d] ", pos);
+    for (int pos = 0; pos < steps; pos++) {
+        // Forward pass
+        float* logits = forward(&transformer, token, pos);
         
-        logits = forward(&transformer, token, pos);
         if (logits == NULL) {
-            Print(L"NULL! ");
+            Print(L"[ERROR] Forward pass returned NULL at pos %d!\r\n", pos);
             break;
         }
         
-        token = argmax(logits, transformer.config.vocab_size);
-        Print(L"%d ", token);
+        // Debug: Show first 10 logits values
+        if (pos == 0) {
+            Print(L"\r\nFirst 10 logits: ");
+            for (int i = 0; i < 10; i++) {
+                // Print with basic float formatting
+                int whole = (int)logits[i];
+                int frac = (int)((logits[i] - whole) * 100);
+                if (frac < 0) frac = -frac;
+                Print(L"%d.%02d ", whole, frac);
+            }
+            Print(L"\r\n\r\n");
+        }
         
-        if (pos % 5 == 0) Print(L"\r\n");
+        // Sample next token
+        int next = argmax(logits, transformer.config.vocab_size);
+        
+        // Print progress
+        Print(L"[%d] %d ", pos, next);
+        if ((pos + 1) % 10 == 0) Print(L"\r\n");
+        
+        token = next;
     }
-    Print(L"\r\n[SUCCESS] Generation complete!\r\n");
+    
+    Print(L"\r\n\r\nGeneration complete.\r\n");
     
 exit_prompt:
     Print(L"\r\nPress any key to exit.\r\n");

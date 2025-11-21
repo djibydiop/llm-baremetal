@@ -222,6 +222,15 @@ EFI_STATUS init_run_state(RunState* s, Config* p, EFI_BOOT_SERVICES *BS) {
     Status = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData, p->vocab_size * sizeof(float), (void**)&static_logits);
     if (EFI_ERROR(Status)) { Print(L"[ERROR] Failed to allocate logits: %r\r\n", Status); return Status; }
     
+    // Zero out KV cache (critical for correct inference)
+    Print(L"  Zeroing KV cache...\r\n");
+    UINTN kv_cache_size = p->n_layers * p->seq_len * kv_dim * sizeof(float);
+    for (UINTN i = 0; i < kv_cache_size / sizeof(float); i++) {
+        static_key_cache[i] = 0.0f;
+        static_value_cache[i] = 0.0f;
+    }
+    Print(L"  KV cache zeroed!\r\n");
+    
     // Point RunState to allocated buffers
     s->x = static_x;
     s->xb = static_xb;

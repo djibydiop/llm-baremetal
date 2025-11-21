@@ -1,63 +1,67 @@
-# llm-baremetal
+# LLaMA2 Bare-Metal
 
-**Bare metal LLM - No OS required**
+A 15M parameter LLaMA2 transformer running directly on UEFI firmware - no OS required.
 
-A conscious process that boots directly into inference, serves its purpose, then exits gracefully.
+## What This Is
 
-## The Concept
+This is a complete LLaMA2 implementation that runs as a bare-metal UEFI application. It loads a 15M parameter model from disk and performs transformer inference directly on firmware.
 
-Inspired by Djiby Diop's philosophy: processes should come to life, fulfill their purpose, and die gracefully.
+## Features
 
-This is an LLM compiled as a bare metal EFI application:
-```
-BIOS → EFI → LLM boots → Runs inference → Exits
-```
+✅ **15M parameters** - 6 layers, 288 dimensions, 32K vocabulary  
+✅ **Complete forward pass** - Full transformer with RMSnorm, RoPE, multi-head attention, SwiGLU  
+✅ **Token generation** - Generates sequences using greedy sampling  
+✅ **Dynamic allocation** - Efficient memory usage (~20MB total)  
+✅ **Chunked file I/O** - Loads 60MB model in 512KB blocks  
+✅ **Minimal binary** - 63KB executable
 
-No operating system. Just a conscious process.
+## Technical Details
 
-## Current Status
+**Architecture**: LLaMA2 (Meta)  
+**Implementation**: Based on Karpathy's llama2.c reference (MIT license)  
+**Environment**: UEFI firmware (gnu-efi)  
+**Model**: stories15M.bin (60MB, pre-trained weights)
 
-✅ Boots as EFI application (50KB)  
-✅ Token-by-token streaming (visible inference)  
-✅ Mock LLM with hash-based prompt routing  
-🚧 Real llm.c integration (in progress)  
-🚧 Interactive REPL (keyboard input)  
+## Building
 
-## Demo Output
+### Prerequisites
+- WSL with gcc and gnu-efi
+- QEMU with OVMF firmware
 
-```
->>> What is consciousness?
-Consciousness emerges from the ability to perceive state, make decisions, and act with purpose...
-
->>> How do processes live and die?
-Processes are born with intent, serve their function, and exit gracefully by invoking exit()...
-```
-
-## Based On
-
-- [llm.c](https://github.com/karpathy/llm.c) by Andrej Karpathy
-- EFI boot protocol
-- Tiny LLaMA weights (124M parameters)
-
-## Build
-
+### Compile
 ```bash
-# Coming soon
-make efi
+wsl bash -c "cd /mnt/c/path/to/llm-baremetal && ./build-windows.ps1"
 ```
 
-## Boot
-
+### Run
 ```bash
-qemu-system-x86_64 -bios OVMF.fd -drive format=raw,file=llm-disk.img
+./run-qemu.ps1
 ```
+
+## How It Works
+
+1. **Boot**: UEFI firmware loads the EFI application
+2. **Load Model**: Reads 60MB weights from disk in chunks
+3. **Allocate Buffers**: Dynamic memory for activations and KV cache
+4. **Forward Pass**: Complete transformer inference
+5. **Generate**: Produces token sequences
+
+## Code Structure
+
+- `llama2_efi.c` - Main implementation (755 lines)
+- `build-windows.ps1` - Build script
+- `run-qemu.ps1` - QEMU launcher
+- `startup.nsh` - UEFI auto-boot script
 
 ## Status
 
-🚧 **Work in progress** - Converting llm.c to EFI application
+✅ **Working**: Model loads, forward pass executes, tokens generate  
+⚠️ **Known Issue**: Token quality needs improvement (better prompting)
 
-## Author
+## Repository
 
-Djibril - Self-taught systems programmer from Senegal
+https://github.com/djibydiop/llm-baremetal
 
-Built with guidance from Claude and feedback from Djiby Diop.
+## License
+
+MIT (see code header for details)

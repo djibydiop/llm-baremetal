@@ -12,3 +12,6 @@
 .DS_Store
 Thumbs.db
 *.bin
+*.img
+*.bin
+*.log

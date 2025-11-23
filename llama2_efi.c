@@ -24,6 +24,223 @@
 static int g_has_avx2 = 0;
 
 // ----------------------------------------------------------------------------
+// CONVERSATIONAL FEATURES (OPTION 5)
+// ----------------------------------------------------------------------------
+
+// Conversation history management
+#define MAX_HISTORY_ENTRIES 10
+#define MAX_PROMPT_LENGTH 256
+#define MAX_RESPONSE_LENGTH 512
+
+typedef struct {
+    char prompt[MAX_PROMPT_LENGTH];
+    char response[MAX_RESPONSE_LENGTH];
+    int prompt_token_count;
+    int response_token_count;
+} ConversationTurn;
+
+typedef struct {
+    ConversationTurn turns[MAX_HISTORY_ENTRIES];
+    int count;
+    int total_tokens;
+    float temperature;
+    int max_response_tokens;
+} ConversationHistory;
+
+// Initialize conversation history
+void init_conversation(ConversationHistory* hist) {
+    hist->count = 0;
+    hist->total_tokens = 0;
+    hist->temperature = 0.9f;
+    hist->max_response_tokens = 100;
+    
+    for (int i = 0; i < MAX_HISTORY_ENTRIES; i++) {
+        hist->turns[i].prompt[0] = '\0';
+        hist->turns[i].response[0] = '\0';
+        hist->turns[i].prompt_token_count = 0;
+        hist->turns[i].response_token_count = 0;
+    }
+}
+
+// Add turn to conversation history
+void add_turn(ConversationHistory* hist, const char* prompt, const char* response, 
+              int prompt_tokens, int response_tokens) {
+    if (hist->count >= MAX_HISTORY_ENTRIES) {
+        // Shift history (remove oldest)
+        for (int i = 0; i < MAX_HISTORY_ENTRIES - 1; i++) {
+            // Copy turn i+1 to turn i
+            for (int j = 0; j < MAX_PROMPT_LENGTH; j++) {
+                hist->turns[i].prompt[j] = hist->turns[i+1].prompt[j];
+            }
+            for (int j = 0; j < MAX_RESPONSE_LENGTH; j++) {
+                hist->turns[i].response[j] = hist->turns[i+1].response[j];
+            }
+            hist->turns[i].prompt_token_count = hist->turns[i+1].prompt_token_count;
+            hist->turns[i].response_token_count = hist->turns[i+1].response_token_count;
+        }
+        hist->count = MAX_HISTORY_ENTRIES - 1;
+    }
+    
+    // Add new turn
+    int idx = hist->count;
+    int i = 0;
+    while (prompt[i] && i < MAX_PROMPT_LENGTH - 1) {
+        hist->turns[idx].prompt[i] = prompt[i];
+        i++;
+    }
+    hist->turns[idx].prompt[i] = '\0';
+    
+    i = 0;
+    while (response[i] && i < MAX_RESPONSE_LENGTH - 1) {
+        hist->turns[idx].response[i] = response[i];
+        i++;
+    }
+    hist->turns[idx].response[i] = '\0';
+    
+    hist->turns[idx].prompt_token_count = prompt_tokens;
+    hist->turns[idx].response_token_count = response_tokens;
+    hist->total_tokens += prompt_tokens + response_tokens;
+    hist->count++;
+}
+
+// Clear conversation history
+void clear_history(ConversationHistory* hist) {
+    hist->count = 0;
+    hist->total_tokens = 0;
+}
+
+// Check if input is a command (starts with /)
+int is_command(const char* input) {
+    return input[0] == '/';
+}
+
+// Process system commands
+int process_command(const char* input, ConversationHistory* hist, EFI_SYSTEM_TABLE* ST) {
+    // /help - Show available commands
+    if (strcmp(input, "/help") == 0) {
+        Print(L"\r\n=== Available Commands ===\r\n");
+        Print(L"/help       - Show this help message\r\n");
+        Print(L"/clear      - Clear conversation history\r\n");
+        Print(L"/history    - Show conversation history\r\n");
+        Print(L"/stats      - Show conversation statistics\r\n");
+        Print(L"/temp <val> - Set temperature (0.0-1.5)\r\n");
+        Print(L"/tokens <n> - Set max response tokens\r\n");
+        Print(L"/exit       - Exit conversation\r\n");
+        Print(L"========================\r\n\r\n");
+        return 1;
+    }
+    
+    // /clear - Clear history
+    if (strcmp(input, "/clear") == 0) {
+        clear_history(hist);
+        Print(L"\r\n[Conversation history cleared]\r\n\r\n");
+        return 1;
+    }
+    
+    // /history - Show conversation history
+    if (strcmp(input, "/history") == 0) {
+        Print(L"\r\n=== Conversation History ===\r\n");
+        if (hist->count == 0) {
+            Print(L"(empty)\r\n");
+        } else {
+            for (int i = 0; i < hist->count; i++) {
+                Print(L"\r\nTurn %d:\r\n", i + 1);
+                Print(L"  User: \"");
+                for (int j = 0; hist->turns[i].prompt[j] && j < 50; j++) {
+                    Print(L"%c", (CHAR16)hist->turns[i].prompt[j]);
+                }
+                if (hist->turns[i].prompt[50]) Print(L"...");
+                Print(L"\"\r\n");
+                Print(L"  Tokens: %d + %d\r\n", 
+                      hist->turns[i].prompt_token_count,
+                      hist->turns[i].response_token_count);
+            }
+        }
+        Print(L"==========================\r\n\r\n");
+        return 1;
+    }
+    
+    // /stats - Show statistics
+    if (strcmp(input, "/stats") == 0) {
+        Print(L"\r\n=== Conversation Stats ===\r\n");
+        Print(L"Turns: %d/%d\r\n", hist->count, MAX_HISTORY_ENTRIES);
+        Print(L"Total tokens: %d\r\n", hist->total_tokens);
+        Print(L"Temperature: %.2f\r\n", (double)hist->temperature);
+        Print(L"Max response tokens: %d\r\n", hist->max_response_tokens);
+        if (g_has_avx2) {
+            Print(L"SIMD: AVX2 enabled\r\n");
+        } else {
+            Print(L"SIMD: Scalar fallback\r\n");
+        }
+        Print(L"=========================\r\n\r\n");
+        return 1;
+    }
+    
+    // /temp <value> - Set temperature
+    if (input[0] == '/' && input[1] == 't' && input[2] == 'e' && 
+        input[3] == 'm' && input[4] == 'p' && input[5] == ' ') {
+        // Parse temperature value (simple float parsing)
+        float new_temp = 0.9f;
+        const char* val_str = &input[6];
+        
+        // Simple parsing: 0.X format
+        if (val_str[0] >= '0' && val_str[0] <= '9') {
+            int whole = val_str[0] - '0';
+            int frac = 0;
+            if (val_str[1] == '.' && val_str[2] >= '0' && val_str[2] <= '9') {
+                frac = val_str[2] - '0';
+                new_temp = (float)whole + (float)frac / 10.0f;
+            } else {
+                new_temp = (float)whole;
+            }
+            
+            // Clamp to reasonable range
+            if (new_temp < 0.0f) new_temp = 0.0f;
+            if (new_temp > 1.5f) new_temp = 1.5f;
+            
+            hist->temperature = new_temp;
+            Print(L"\r\n[Temperature set to %.2f]\r\n\r\n", (double)new_temp);
+        } else {
+            Print(L"\r\n[Invalid temperature value. Use /temp <0.0-1.5>]\r\n\r\n");
+        }
+        return 1;
+    }
+    
+    // /tokens <n> - Set max response tokens
+    if (input[0] == '/' && input[1] == 't' && input[2] == 'o' && 
+        input[3] == 'k' && input[4] == 'e' && input[5] == 'n' && 
+        input[6] == 's' && input[7] == ' ') {
+        // Parse token count
+        int new_tokens = 0;
+        const char* val_str = &input[8];
+        
+        // Simple integer parsing
+        while (*val_str >= '0' && *val_str <= '9') {
+            new_tokens = new_tokens * 10 + (*val_str - '0');
+            val_str++;
+        }
+        
+        if (new_tokens > 0 && new_tokens <= 512) {
+            hist->max_response_tokens = new_tokens;
+            Print(L"\r\n[Max response tokens set to %d]\r\n\r\n", new_tokens);
+        } else {
+            Print(L"\r\n[Invalid token count. Use /tokens <1-512>]\r\n\r\n");
+        }
+        return 1;
+    }
+    
+    // /exit - Exit conversation
+    if (strcmp(input, "/exit") == 0) {
+        Print(L"\r\n[Exiting conversation...]\r\n\r\n");
+        return 2;  // Signal exit
+    }
+    
+    // Unknown command
+    Print(L"\r\n[Unknown command. Type /help for available commands]\r\n\r\n");
+    return 1;
+}
+
+// ----------------------------------------------------------------------------
 // String utilities for REPL
 
 int strcmp(const char* s1, const char* s2) {
@@ -2037,51 +2254,62 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     Print(L"\r\n\r\nGeneration complete.\r\n");
     
     } else {
-        // INTERACTIVE REPL MODE (AUTO-DEMO)
-        Print(L"=== Interactive REPL Mode (Auto-Demo) ===\r\n");
+        // INTERACTIVE CONVERSATIONAL MODE (OPTION 5)
+        Print(L"=== Conversational Mode with Commands ===\r\n");
+        Print(L"Type /help for available commands\r\n");
+        
+        // Initialize conversation history
+        ConversationHistory history;
+        init_conversation(&history);
         
         // Select prompts based on model type
         const char** demo_prompts;
         int num_prompts;
         
         if (transformer.config.model_type == MODEL_TINYLLAMA_CHAT) {
-            Print(L"Chat model detected - Using conversational prompts\r\n");
-            Print(L"(Keyboard input disabled in QEMU/OVMF)\r\n\r\n");
+            Print(L"Chat model: TinyLlama-1.1B-Chat\r\n");
+            Print(L"(Auto-demo mode - keyboard disabled in QEMU)\r\n\r\n");
             static const char* chat_prompts[] = {
                 "Hello! How are you today?",
+                "/stats",
                 "What is the capital of France?",
-                "Tell me a joke"
+                "/temp 0.7",
+                "Tell me a short joke",
+                "/history"
             };
             demo_prompts = chat_prompts;
-            num_prompts = 3;
+            num_prompts = 6;
         } else if (transformer.config.model_type == MODEL_NANOGPT) {
-            Print(L"GPT-2 model detected - Using completion prompts\r\n");
-            Print(L"(Keyboard input disabled in QEMU/OVMF)\r\n\r\n");
+            Print(L"Completion model: NanoGPT-124M\r\n");
+            Print(L"(Auto-demo mode - keyboard disabled in QEMU)\r\n\r\n");
             static const char* gpt_prompts[] = {
                 "The quick brown fox",
+                "/stats",
                 "In a distant galaxy",
-                "To be or not to be"
+                "/clear"
             };
             demo_prompts = gpt_prompts;
-            num_prompts = 3;
+            num_prompts = 4;
         } else {
-            Print(L"Story model detected - Using story prompts\r\n");
-            Print(L"(Keyboard input disabled in QEMU/OVMF)\r\n\r\n");
+            Print(L"Story model: stories15M\r\n");
+            Print(L"(Auto-demo mode - keyboard disabled in QEMU)\r\n\r\n");
             static const char* story_prompts[] = {
                 "Once upon a time",
-                "The little girl",
-                "In the forest"
+                "/stats",
+                "The brave knight",
+                "/history"
             };
             demo_prompts = story_prompts;
-            num_prompts = 3;
+            num_prompts = 4;
         }
         
         char user_input[512];
+        char response_buffer[MAX_RESPONSE_LENGTH];
         int conversation_pos = 0;  // Track position in conversation
         
         for (int demo_idx = 0; demo_idx < num_prompts; demo_idx++) {
-            // Display auto-prompt
-            Print(L">>> [Auto-prompt %d/%d]\r\n", demo_idx + 1, num_prompts);
+            // Display turn indicator
+            Print(L"\r\n[Turn %d/%d]\r\n", demo_idx + 1, num_prompts);
             
             // Copy demo prompt
             const char* prompt = demo_prompts[demo_idx];
@@ -2092,24 +2320,39 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
             }
             user_input[prompt_len] = '\0';
             
-            // Display prompt
-            Print(L"Prompt: \"");
+            // Display user input
+            Print(L"User>>> ");
             for (int i = 0; user_input[i]; i++) {
                 Print(L"%c", (CHAR16)user_input[i]);
             }
-            Print(L"\"\r\n\r\n");
+            Print(L"\r\n");
+            
+            // Check if it's a command
+            if (is_command(user_input)) {
+                int cmd_result = process_command(user_input, &history, SystemTable);
+                if (cmd_result == 2) {
+                    // Exit command
+                    break;
+                }
+                continue;  // Skip generation for commands
+            }
+            
+            Print(L"Assistant>>> ");
             
             int token;
-            int max_response_tokens = 100;  // Shorter responses for REPL
+            int max_response_tokens = history.max_response_tokens;
+            int response_len = 0;
+            response_buffer[0] = '\0';
             
+            // Start token
             if (conversation_pos == 0) {
-                // First turn - start with BOS
-                token = 1;
+                token = 1;  // BOS token
             } else {
-                // Continue from where we left off
-                // In a real implementation, we'd maintain conversation context
-                token = 1;  // For now, always restart
+                token = 1;  // Always restart for demo (no context carryover)
             }
+            
+            int prompt_tokens = 0;  // Would be from encode_prompt() in real impl
+            int response_tokens = 0;
             
             // Generate response
             for (int i = 0; i < max_response_tokens; i++) {
@@ -2120,21 +2363,24 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
                     break;
                 }
                 
-                // Sample next token
+                // Sample next token with current temperature
                 int next;
-                if (temperature == 0.0f) {
+                if (history.temperature == 0.0f) {
                     next = argmax(logits, transformer.config.vocab_size);
                 } else {
                     for (int j = 0; j < transformer.config.vocab_size; j++) {
-                        logits[j] /= temperature;
+                        logits[j] /= history.temperature;
                     }
                     softmax(logits, transformer.config.vocab_size);
                     float coin = (float)rand_efi() / (float)RAND_MAX;
                     next = sample_mult(logits, transformer.config.vocab_size, coin);
                 }
                 
+                response_tokens++;
+                
                 // Check for EOS token (end of sequence)
                 if (next == 2) {
+                    Print(L"[EOS]\r\n");
                     break;
                 }
                 
@@ -2147,30 +2393,45 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
                         wpiece[k+1] = 0;
                     }
                     Print(L"%s", wpiece);
+                    
+                    // Store in response buffer
+                    for (int k = 0; piece[k] && response_len < MAX_RESPONSE_LENGTH - 1; k++) {
+                        response_buffer[response_len++] = piece[k];
+                    }
                 } else {
                     Print(L"[%d] ", next);
                 }
                 
                 token = next;
             }
+            response_buffer[response_len] = '\0';
+            
+            
+            // Add to conversation history
+            add_turn(&history, user_input, response_buffer, prompt_tokens, response_tokens);
             
             Print(L"\r\n");
-            Print(L"----------------------------------------\r\n\r\n");
+            Print(L"[Tokens: ~%d | Temp: %.2f | Total: %d]\r\n", 
+                  response_tokens, (double)history.temperature, history.total_tokens);
+            Print(L"--------------------------------------------------\r\n");
+            
             conversation_pos += max_response_tokens;
             
-            // Small delay between prompts
-            ST->BootServices->Stall(1000000); // 1 second
+            // Small delay between turns
+            SystemTable->BootServices->Stall(1500000); // 1.5 seconds
             
             // Reset if conversation gets too long
             if (conversation_pos > transformer.config.seq_len - 100) {
                 conversation_pos = 0;
-                Print(L"[Context window full - conversation reset]\r\n\r\n");
+                Print(L"\r\n[Context window limit reached - resetting]\r\n\r\n");
             }
         }
         
-        Print(L"\r\n=== Auto-Demo Complete ===\r\n");
-        Print(L"Note: Keyboard input crashes in QEMU/OVMF emulation.\r\n");
-        Print(L"For interactive REPL, test on real UEFI hardware.\r\n\r\n");
+        Print(L"\r\n=== Conversation Session Complete ===\r\n");
+        Print(L"Total turns: %d\r\n", history.count);
+        Print(L"Total tokens: %d\r\n", history.total_tokens);
+        Print(L"\r\nNote: Keyboard input disabled in QEMU/OVMF.\r\n");
+        Print(L"For full interactive mode, test on real UEFI hardware.\r\n\r\n");
     }
     
     Print(L"\r\nSession ended.\r\n");

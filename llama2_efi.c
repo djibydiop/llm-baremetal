@@ -13,6 +13,7 @@
 #include <efi.h>
 #include <efilib.h>
 #include <stdint.h>
+#include <stddef.h>
 
 // ----------------------------------------------------------------------------
 // String utilities for REPL
@@ -23,6 +24,69 @@ int strcmp(const char* s1, const char* s2) {
         s2++;
     }
     return *(const unsigned char*)s1 - *(const unsigned char*)s2;
+}
+
+size_t my_strlen(const char* s) {
+    const char* p = s;
+    while (*p) p++;
+    return p - s;
+}
+
+void* my_memcpy(void* dest, const void* src, size_t n) {
+    char* d = (char*)dest;
+    const char* s = (const char*)src;
+    while (n--) *d++ = *s++;
+    return dest;
+}
+
+// Simple sprintf for formatting byte tokens
+int my_sprintf(char* str, const char* format, ...) {
+    // Very simplified sprintf - only handles <0x%02X> format
+    __builtin_va_list args;
+    __builtin_va_start(args, format);
+    
+    int written = 0;
+    const char* p = format;
+    
+    while (*p) {
+        if (*p == '%') {
+            p++;
+            if (*p == '0') {
+                p++; // skip '0'
+                int width = *p++ - '0'; // get width (e.g., '2')
+                if (*p == 'X' || *p == 'x') {
+                    // Hex format
+                    unsigned int val = __builtin_va_arg(args, unsigned int);
+                    char hex[] = "0123456789ABCDEF";
+                    char buf[10];
+                    int pos = 0;
+                    
+                    // Convert to hex
+                    do {
+                        buf[pos++] = hex[val % 16];
+                        val /= 16;
+                    } while (val && pos < 10);
+                    
+                    // Pad with zeros if needed
+                    while (pos < width && pos < 10) {
+                        buf[pos++] = '0';
+                    }
+                    
+                    // Write reversed (correct order)
+                    while (pos > 0) {
+                        str[written++] = buf[--pos];
+                    }
+                    p++;
+                }
+            }
+        } else {
+            str[written++] = *p++;
+        }
+    }
+    
+    str[written] = '\0';
+    __builtin_va_end(args);
+    return written;
 }
 
 // ----------------------------------------------------------------------------
@@ -1344,19 +1408,102 @@ int read_user_input(EFI_SYSTEM_TABLE *ST, char* buffer, int max_len) {
 }
 
 // Simple BPE encoder for user input (simplified version)
+// Helper: find token in vocabulary by exact string match
+int str_lookup(char* str, Tokenizer* t) {
+    for (int i = 0; i < t->vocab_size; i++) {
+        if (strcmp(str, t->vocab[i]) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// BPE encode: convert text to tokens using byte-pair encoding
 int encode_prompt(Tokenizer* t, char* text, int* tokens, int max_tokens) {
-    // Very simple encoding: just look up each word/character
-    // For a proper implementation, we'd need the full BPE algorithm
-    // For now, we'll just return BOS token and hope the model continues well
-    
     int n_tokens = 0;
     
     // Always start with BOS token (1)
     tokens[n_tokens++] = 1;
     
-    // For this simple version, we'll just add a dummy prefix token
-    // The model will continue from there
-    // In a real implementation, we'd tokenize the user's input properly
+    // Handle empty or null input
+    if (!text || text[0] == '\0') {
+        return n_tokens;
+    }
+    
+    // BPE encoding: first encode each byte as a token
+    // Allocate temporary array for character tokens
+    int* char_tokens = (int*)__builtin_alloca(my_strlen(text) * sizeof(int));
+    int n_char_tokens = 0;
+    
+    // Convert each character to token ID
+    for (char* c = text; *c != '\0' && n_char_tokens < max_tokens - 1; c++) {
+        // For single byte characters, look up directly in vocab
+        char single_char[2] = {*c, '\0'};
+        int token_id = str_lookup(single_char, t);
+        
+        if (token_id != -1) {
+            char_tokens[n_char_tokens++] = token_id;
+        } else {
+            // If character not found, try byte representation
+            // Most tokenizers have byte-level fallback tokens like <0xXX>
+            char byte_token[10];
+            my_sprintf(byte_token, "<0x%02X>", (unsigned char)*c);
+            token_id = str_lookup(byte_token, t);
+            if (token_id != -1) {
+                char_tokens[n_char_tokens++] = token_id;
+            }
+        }
+    }
+    
+    // Now perform BPE merges
+    // This is a simplified version - full BPE would need the merge rules
+    // For now, we try to merge adjacent tokens if they form a known bigram
+    while (1) {
+        float best_score = -1e10;
+        int best_id = -1;
+        int best_idx = -1;
+        
+        // Find the best pair to merge
+        for (int i = 0; i < n_char_tokens - 1; i++) {
+            // Create merged string
+            char* str1 = t->vocab[char_tokens[i]];
+            char* str2 = t->vocab[char_tokens[i + 1]];
+            
+            // Allocate space for merged string
+            int len1 = my_strlen(str1);
+            int len2 = my_strlen(str2);
+            char* merged = (char*)__builtin_alloca(len1 + len2 + 1);
+            my_memcpy(merged, str1, len1);
+            my_memcpy(merged + len1, str2, len2);
+            merged[len1 + len2] = '\0';
+            
+            // Look up merged token
+            int merged_id = str_lookup(merged, t);
+            if (merged_id != -1 && t->vocab_scores[merged_id] > best_score) {
+                best_score = t->vocab_scores[merged_id];
+                best_id = merged_id;
+                best_idx = i;
+            }
+        }
+        
+        // No more merges possible
+        if (best_idx == -1) {
+            break;
+        }
+        
+        // Perform the merge
+        char_tokens[best_idx] = best_id;
+        // Shift remaining tokens left
+        for (int i = best_idx + 1; i < n_char_tokens - 1; i++) {
+            char_tokens[i] = char_tokens[i + 1];
+        }
+        n_char_tokens--;
+    }
+    
+    // Copy final tokens to output
+    for (int i = 0; i < n_char_tokens && n_tokens < max_tokens; i++) {
+        tokens[n_tokens++] = char_tokens[i];
+    }
     
     return n_tokens;
 }

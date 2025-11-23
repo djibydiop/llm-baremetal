@@ -55,7 +55,8 @@ llama2-disk: $(LLAMA2)
 	mmd -i llama2-disk.img ::/EFI/BOOT
 	mcopy -i llama2-disk.img $(LLAMA2) ::/EFI/BOOT/BOOTX64.EFI
 	mcopy -i llama2-disk.img stories15M.bin ::/
-	@echo "Disk image created: llama2-disk.img (15M params)"
+	mcopy -i llama2-disk.img tokenizer.bin ::/
+	@echo "Disk image created: llama2-disk.img (15M params + tokenizer)"
 
 # Test llama2 in QEMU
 test-llama2: llama2-disk

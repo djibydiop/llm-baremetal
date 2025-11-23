@@ -13,5 +13,12 @@
 Thumbs.db
 *.bin
 *.img
-*.bin
 *.log
+
+# QEMU debug outputs
+qemu_logits_debug.txt
+qemu_logits_test.txt
+qemu_output_captured.txt
+screenshot_output.txt
+qemu_screenshot.log
+qemu_*.txt

@@ -15,6 +15,14 @@
 #include <stdint.h>
 #include <stddef.h>
 
+// AVX/SSE intrinsics for SIMD optimizations
+#if defined(__AVX2__)
+#include <immintrin.h>
+#endif
+
+// Global flag for AVX2 support (set at runtime)
+static int g_has_avx2 = 0;
+
 // ----------------------------------------------------------------------------
 // String utilities for REPL
 
@@ -832,8 +840,62 @@ void memory_map_weights(TransformerWeights *w, Config* p, float* ptr, int shared
 // ----------------------------------------------------------------------------
 // TRANSFORMER LOGIC (100% UNCHANGED from Karpathy's llama2.c)
 
+#if defined(__AVX2__)
+void rmsnorm_avx2(float* o, float* x, float* weight, int size) {
+    // Calculate sum of squares using AVX2
+    __m256 ss_vec = _mm256_setzero_ps();
+    int j = 0;
+    
+    for (; j <= size - 8; j += 8) {
+        __m256 x_vec = _mm256_loadu_ps(&x[j]);
+        ss_vec = _mm256_fmadd_ps(x_vec, x_vec, ss_vec);
+    }
+    
+    // Horizontal sum
+    __m128 sum_high = _mm256_extractf128_ps(ss_vec, 1);
+    __m128 sum_low = _mm256_castps256_ps128(ss_vec);
+    __m128 sum128 = _mm_add_ps(sum_low, sum_high);
+    __m128 shuf = _mm_movehdup_ps(sum128);
+    __m128 sums = _mm_add_ps(sum128, shuf);
+    shuf = _mm_movehl_ps(shuf, sums);
+    sums = _mm_add_ss(sums, shuf);
+    float ss = _mm_cvtss_f32(sums);
+    
+    // Remainder
+    for (; j < size; j++) {
+        ss += x[j] * x[j];
+    }
+    
+    ss /= size;
+    ss += 1e-5f;
+    ss = 1.0f / sqrtf(ss);
+    
+    // Normalize and scale using AVX2
+    __m256 ss_broadcast = _mm256_set1_ps(ss);
+    j = 0;
+    for (; j <= size - 8; j += 8) {
+        __m256 x_vec = _mm256_loadu_ps(&x[j]);
+        __m256 w_vec = _mm256_loadu_ps(&weight[j]);
+        __m256 result = _mm256_mul_ps(w_vec, _mm256_mul_ps(ss_broadcast, x_vec));
+        _mm256_storeu_ps(&o[j], result);
+    }
+    
+    // Remainder
+    for (; j < size; j++) {
+        o[j] = weight[j] * (ss * x[j]);
+    }
+}
+#endif
+
 void rmsnorm(float* o, float* x, float* weight, int size) {
-    // calculate sum of squares
+#if defined(__AVX2__)
+    if (g_has_avx2) {
+        rmsnorm_avx2(o, x, weight, size);
+        return;
+    }
+#endif
+    
+    // Scalar fallback: calculate sum of squares
     float ss = 0.0f;
     for (int j = 0; j < size; j++) {
         ss += x[j] * x[j];
@@ -847,8 +909,93 @@ void rmsnorm(float* o, float* x, float* weight, int size) {
     }
 }
 
+#if defined(__AVX2__)
+void softmax_avx2(float* x, int size) {
+    // Find max value using AVX2
+    __m256 max_vec = _mm256_set1_ps(x[0]);
+    int i = 0;
+    
+    for (; i <= size - 8; i += 8) {
+        __m256 x_vec = _mm256_loadu_ps(&x[i]);
+        max_vec = _mm256_max_ps(max_vec, x_vec);
+    }
+    
+    // Horizontal max
+    __m128 max_high = _mm256_extractf128_ps(max_vec, 1);
+    __m128 max_low = _mm256_castps256_ps128(max_vec);
+    __m128 max128 = _mm_max_ps(max_low, max_high);
+    max128 = _mm_max_ps(max128, _mm_shuffle_ps(max128, max128, 0x4E));
+    max128 = _mm_max_ps(max128, _mm_shuffle_ps(max128, max128, 0xB1));
+    float max_val = _mm_cvtss_f32(max128);
+    
+    // Check remainder
+    for (; i < size; i++) {
+        if (x[i] > max_val) {
+            max_val = x[i];
+        }
+    }
+    
+    // Exp and sum using AVX2
+    __m256 max_broadcast = _mm256_set1_ps(max_val);
+    __m256 sum_vec = _mm256_setzero_ps();
+    i = 0;
+    
+    for (; i <= size - 8; i += 8) {
+        __m256 x_vec = _mm256_loadu_ps(&x[i]);
+        x_vec = _mm256_sub_ps(x_vec, max_broadcast);
+        
+        // Note: expf is scalar, need to process element-wise
+        float temp[8];
+        _mm256_storeu_ps(temp, x_vec);
+        for (int k = 0; k < 8; k++) {
+            temp[k] = expf(temp[k]);
+        }
+        x_vec = _mm256_loadu_ps(temp);
+        _mm256_storeu_ps(&x[i], x_vec);
+        sum_vec = _mm256_add_ps(sum_vec, x_vec);
+    }
+    
+    // Horizontal sum
+    __m128 sum_high = _mm256_extractf128_ps(sum_vec, 1);
+    __m128 sum_low = _mm256_castps256_ps128(sum_vec);
+    __m128 sum128 = _mm_add_ps(sum_low, sum_high);
+    __m128 shuf = _mm_movehdup_ps(sum128);
+    __m128 sums = _mm_add_ps(sum128, shuf);
+    shuf = _mm_movehl_ps(shuf, sums);
+    sums = _mm_add_ss(sums, shuf);
+    float sum = _mm_cvtss_f32(sums);
+    
+    // Remainder exp and sum
+    for (; i < size; i++) {
+        x[i] = expf(x[i] - max_val);
+        sum += x[i];
+    }
+    
+    // Normalize using AVX2
+    __m256 sum_broadcast = _mm256_set1_ps(sum);
+    i = 0;
+    for (; i <= size - 8; i += 8) {
+        __m256 x_vec = _mm256_loadu_ps(&x[i]);
+        x_vec = _mm256_div_ps(x_vec, sum_broadcast);
+        _mm256_storeu_ps(&x[i], x_vec);
+    }
+    
+    // Remainder
+    for (; i < size; i++) {
+        x[i] /= sum;
+    }
+}
+#endif
+
 void softmax(float* x, int size) {
-    // find max value (for numerical stability)
+#if defined(__AVX2__)
+    if (g_has_avx2) {
+        softmax_avx2(x, size);
+        return;
+    }
+#endif
+    
+    // Scalar fallback: find max value (for numerical stability)
     float max_val = x[0];
     for (int i = 1; i < size; i++) {
         if (x[i] > max_val) {
@@ -867,8 +1014,49 @@ void softmax(float* x, int size) {
     }
 }
 
+#if defined(__AVX2__)
+void matmul_avx2(float* xout, float* x, float* w, int n, int d) {
+    // W (d,n) @ x (n,) -> xout (d,) using AVX2 (8 floats at a time)
+    for (int i = 0; i < d; i++) {
+        __m256 sum_vec = _mm256_setzero_ps();
+        int j = 0;
+        
+        // Process 8 elements at a time
+        for (; j <= n - 8; j += 8) {
+            __m256 w_vec = _mm256_loadu_ps(&w[i * n + j]);
+            __m256 x_vec = _mm256_loadu_ps(&x[j]);
+            sum_vec = _mm256_fmadd_ps(w_vec, x_vec, sum_vec);
+        }
+        
+        // Horizontal sum of 8 elements
+        __m128 sum_high = _mm256_extractf128_ps(sum_vec, 1);
+        __m128 sum_low = _mm256_castps256_ps128(sum_vec);
+        __m128 sum128 = _mm_add_ps(sum_low, sum_high);
+        __m128 shuf = _mm_movehdup_ps(sum128);
+        __m128 sums = _mm_add_ps(sum128, shuf);
+        shuf = _mm_movehl_ps(shuf, sums);
+        sums = _mm_add_ss(sums, shuf);
+        float val = _mm_cvtss_f32(sums);
+        
+        // Handle remainder
+        for (; j < n; j++) {
+            val += w[i * n + j] * x[j];
+        }
+        
+        xout[i] = val;
+    }
+}
+#endif
+
 void matmul(float* xout, float* x, float* w, int n, int d) {
-    // W (d,n) @ x (n,) -> xout (d,)
+#if defined(__AVX2__)
+    if (g_has_avx2) {
+        matmul_avx2(xout, x, w, n, d);
+        return;
+    }
+#endif
+    
+    // Scalar fallback: W (d,n) @ x (n,) -> xout (d,)
     for (int i = 0; i < d; i++) {
         float val = 0.0f;
         for (int j = 0; j < n; j++) {
@@ -1565,12 +1753,29 @@ int check_and_enable_avx() {
         xcr0_lo |= (1 << 0) | (1 << 1) | (1 << 2);
         __asm__ volatile ("xsetbv" :: "a"(xcr0_lo), "d"(xcr0_hi), "c"(0));
         
-        Print(L"[SUCCESS] SSE/AVX enabled! XCR0 = 0x%08x\r\n", xcr0_lo);
+        // Check for AVX2 support (CPUID Leaf 7)
+        __asm__ volatile (
+            "cpuid"
+            : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+            : "a"(7), "c"(0)
+        );
+        
+        int has_avx2 = (ebx & (1 << 5)) != 0;
+        Print(L"[DEBUG] CPUID.7:EBX = 0x%08x, AVX2: %d\r\n", ebx, has_avx2);
+        
+        if (has_avx2) {
+            g_has_avx2 = 1;
+            Print(L"[SUCCESS] AVX2 enabled! XCR0 = 0x%08x\r\n", xcr0_lo);
+        } else {
+            Print(L"[SUCCESS] AVX enabled (no AVX2 support). XCR0 = 0x%08x\r\n", xcr0_lo);
+        }
+        
         return 1;
     } else {
         // Just enable SSE without AVX
         __asm__ volatile ("mov %0, %%cr4" :: "r"(cr4));
         Print(L"[INFO] SSE enabled (no AVX support)\r\n");
+        g_has_avx2 = 0;
         return 0;
     }
 }

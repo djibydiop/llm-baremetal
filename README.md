@@ -1,27 +1,61 @@
-# LLaMA2 Bare-Metal
+# 🚀 Multimodal LLM Bare-Metal Bootloader
 
-**15M parameter LLaMA2 transformer running directly on UEFI firmware - no OS required.**
+**3 transformer architectures running directly on UEFI firmware - no OS required.**
 
 ## Features
 
+- 🔥 **Multimodal**: 3 models (60MB → 440MB) with auto-detection
 - 🚀 Bare-metal UEFI implementation (no operating system)
-- 🧠 15M parameters (6 layers, 288 dim, 32K vocab)
-- 🎯 Temperature sampling for quality text generation
-- 📦 ~70KB binary, ~62MB runtime memory
-- ⚡ ~2 tokens/second inference speed
+- 🧠 stories15M (15M) / NanoGPT (124M) / TinyLlama-Chat (1.1B)
+- 🎯 Interactive REPL with model-specific prompts
+- 📦 Dynamic memory allocation (110MB → 1GB)
+- ⚡ Optimized with Justine Tunney's powf() (ULP 0.82)
+
+## Supported Models
+
+| Model | Size | Arch | Use Case | Speed |
+|-------|------|------|----------|-------|
+| **stories15M** | 60MB | 6L/288D | Story generation | ~10 tok/s |
+| **NanoGPT-124M** | 48MB | 12L/768D | Text completion | ~3 tok/s |
+| **TinyLlama-Chat** | 440MB | 22L/2048D | Conversational | ~0.5 tok/s |
+
+*Speed benchmarks on bare metal Intel Core i5 (no GPU)*
 
 ## Quick Start
 
+### 1. Download Models
+
 ```bash
-# Download model (60MB from HuggingFace)
-./setup.sh
+# Interactive Python downloader
+python3 download_models.py
 
-# Build and test
+# Or manual download (stories15M only)
+wget https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.bin
+wget https://github.com/karpathy/llama2.c/raw/master/tokenizer.bin
+```
+
+### 2. Build Bootloader
+
+```bash
+# Clean and compile multimodal bootloader
+make clean
 make
-make llama2-disk
 
-# Run in QEMU
-make run
+# Create disk image (auto-includes available models)
+make llama2-disk
+```
+
+### 3. Test
+
+```bash
+# QEMU (keyboard input doesn't work - auto-demo only)
+qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd \
+                   -drive format=raw,file=llama2-disk.img \
+                   -m 512M
+
+# Real hardware (keyboard works!)
+sudo dd if=llama2-disk.img of=/dev/sdX bs=4M
+# Boot from USB
 ```
 
 ## Prerequisites

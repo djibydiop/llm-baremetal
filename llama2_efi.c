@@ -559,8 +559,16 @@ uint32_t rand_efi(void) {
 #define RAND_MAX 32767
 
 // ----------------------------------------------------------------------------
-// Configuration for stories15M.bin
-// dim=288, n_layers=6, n_heads=6, n_kv_heads=6, vocab_size=32000, seq_len=256
+// Multi-Model Architecture Support
+// Model 1: stories15M (60MB) - dim=288, n_layers=6, seq_len=256
+// Model 2: NanoGPT-124M (48MB) - dim=768, n_layers=12, seq_len=1024  
+// Model 3: TinyLlama-1.1B-Chat (440MB) - dim=2048, n_layers=22, seq_len=2048
+
+typedef enum {
+    MODEL_STORIES15M = 1,
+    MODEL_NANOGPT = 2,
+    MODEL_TINYLLAMA_CHAT = 3
+} ModelType;
 
 typedef struct {
     int dim; // transformer dimension
@@ -570,6 +578,7 @@ typedef struct {
     int n_kv_heads; // number of key/value heads (can be < query heads because of multiquery)
     int vocab_size; // vocabulary size, usually 256 (byte-level)
     int seq_len; // max sequence length
+    ModelType model_type; // which model architecture
 } Config;
 
 typedef struct {
@@ -620,13 +629,16 @@ typedef struct {
 
 // ----------------------------------------------------------------------------
 // STATIC ALLOCATION (EFI Modification - replaces malloc_run_state)
-// For stories15M: dim=288, n_layers=6, n_heads=6, hidden_dim=768, vocab=32000, seq_len=256
+// Max dimensions for all supported models:
+// - stories15M: dim=288, n_layers=6, hidden_dim=768, seq_len=256
+// - NanoGPT: dim=768, n_layers=12, hidden_dim=3072, seq_len=1024
+// - TinyLlama-Chat: dim=2048, n_layers=22, hidden_dim=5632, seq_len=2048
 
-#define MAX_DIM 288
-#define MAX_HIDDEN 768
-#define MAX_LAYERS 6
-#define MAX_HEADS 6
-#define MAX_SEQ_LEN 256
+#define MAX_DIM 2048
+#define MAX_HIDDEN 5632
+#define MAX_LAYERS 22
+#define MAX_HEADS 32
+#define MAX_SEQ_LEN 2048
 #define MAX_VOCAB 32000
 
 // Dynamic buffers (allocated at runtime with AllocatePool to avoid huge binary)
@@ -1417,6 +1429,134 @@ int check_and_enable_avx() {
 }
 
 // ----------------------------------------------------------------------------
+// MODEL DETECTION AND SELECTION
+
+typedef struct {
+    CHAR16* filename;
+    CHAR16* display_name;
+    ModelType model_type;
+    int expected_size_mb;
+    BOOLEAN exists;
+} ModelInfo;
+
+EFI_STATUS check_model_exists(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable, CHAR16* filename, BOOLEAN* exists) {
+    EFI_STATUS Status;
+    EFI_LOADED_IMAGE *LoadedImage;
+    EFI_FILE_IO_INTERFACE *FileSystem;
+    EFI_FILE_HANDLE Root;
+    EFI_FILE_HANDLE File;
+    
+    *exists = FALSE;
+    
+    Status = uefi_call_wrapper(SystemTable->BootServices->HandleProtocol, 3,
+        ImageHandle, &LoadedImageProtocol, (void**)&LoadedImage);
+    if (EFI_ERROR(Status)) return Status;
+    
+    Status = uefi_call_wrapper(SystemTable->BootServices->HandleProtocol, 3,
+        LoadedImage->DeviceHandle, &FileSystemProtocol, (void**)&FileSystem);
+    if (EFI_ERROR(Status)) return Status;
+    
+    Status = uefi_call_wrapper(FileSystem->OpenVolume, 2, FileSystem, &Root);
+    if (EFI_ERROR(Status)) return Status;
+    
+    Status = uefi_call_wrapper(Root->Open, 5, Root, &File, filename, EFI_FILE_MODE_READ, 0);
+    if (!EFI_ERROR(Status)) {
+        *exists = TRUE;
+        uefi_call_wrapper(File->Close, 1, File);
+    }
+    
+    return EFI_SUCCESS;
+}
+
+ModelType select_model(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+    Print(L"\r\n");
+    Print(L"╔═══════════════════════════════════════════════╗\r\n");
+    Print(L"║   MULTIMODAL LLM BOOTLOADER - Model Selector  ║\r\n");
+    Print(L"╚═══════════════════════════════════════════════╝\r\n\r\n");
+    
+    ModelInfo models[] = {
+        {L"stories15M.bin", L"stories15M (60MB) - Story generation", MODEL_STORIES15M, 60, FALSE},
+        {L"nanogpt.bin", L"NanoGPT-124M (48MB) - GPT-2 architecture", MODEL_NANOGPT, 48, FALSE},
+        {L"tinyllama_chat.bin", L"TinyLlama-1.1B-Chat (440MB) - Conversational", MODEL_TINYLLAMA_CHAT, 440, FALSE}
+    };
+    int num_models = 3;
+    
+    // Scan for available models
+    Print(L"Scanning for models...\r\n\r\n");
+    int available_count = 0;
+    
+    for (int i = 0; i < num_models; i++) {
+        check_model_exists(ImageHandle, SystemTable, models[i].filename, &models[i].exists);
+        if (models[i].exists) {
+            Print(L"  ✓ [%d] %s\r\n", i + 1, models[i].display_name);
+            available_count++;
+        } else {
+            Print(L"  ✗ [%d] %s (not found)\r\n", i + 1, models[i].display_name);
+        }
+    }
+    
+    if (available_count == 0) {
+        Print(L"\r\n[ERROR] No models found!\r\n");
+        Print(L"Please place at least one model file on the boot disk:\r\n");
+        Print(L"  - stories15M.bin (60MB)\r\n");
+        Print(L"  - nanogpt.bin (48MB)\r\n");
+        Print(L"  - tinyllama_chat.bin (440MB)\r\n\r\n");
+        return 0;
+    }
+    
+    Print(L"\r\nFound %d model(s).\r\n", available_count);
+    
+    // Auto-select if only one model available
+    if (available_count == 1) {
+        for (int i = 0; i < num_models; i++) {
+            if (models[i].exists) {
+                Print(L"Auto-selecting: %s\r\n\r\n", models[i].display_name);
+                return models[i].model_type;
+            }
+        }
+    }
+    
+    // Manual selection for multiple models
+    Print(L"\r\nSelect model (1-%d): ", num_models);
+    
+    // Simple number input (wait for keypress)
+    EFI_INPUT_KEY Key;
+    EFI_STATUS Status;
+    
+    while (TRUE) {
+        Status = uefi_call_wrapper(ST->ConIn->ReadKeyStroke, 2, ST->ConIn, &Key);
+        if (!EFI_ERROR(Status)) {
+            if (Key.UnicodeChar >= L'1' && Key.UnicodeChar <= L'0' + num_models) {
+                int selection = Key.UnicodeChar - L'0';
+                if (models[selection - 1].exists) {
+                    Print(L"%c\r\n\r\n", Key.UnicodeChar);
+                    Print(L"Selected: %s\r\n\r\n", models[selection - 1].display_name);
+                    return models[selection - 1].model_type;
+                } else {
+                    Print(L"\r\nModel not available. Try again: ");
+                }
+            }
+        }
+        ST->BootServices->Stall(100000); // 100ms
+    }
+    
+    return MODEL_STORIES15M; // Fallback
+}
+
+CHAR16* get_model_filename(ModelType model_type) {
+    switch (model_type) {
+        case MODEL_STORIES15M:
+            return L"stories15M.bin";
+        case MODEL_NANOGPT:
+            return L"nanogpt.bin";
+        case MODEL_TINYLLAMA_CHAT:
+            return L"tinyllama_chat.bin";
+        default:
+            return L"stories15M.bin";
+    }
+}
+
+// ----------------------------------------------------------------------------
 // EFI MAIN ENTRY POINT
 
 EFI_STATUS
@@ -1428,18 +1568,30 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     check_and_enable_avx();
     
     Print(L"\r\n");
-    Print(L"LLaMA2 Bare-Metal - 15M parameter transformer\r\n");
+    Print(L"╔═══════════════════════════════════════════════╗\r\n");
+    Print(L"║   MULTIMODAL LLM BARE-METAL BOOTLOADER       ║\r\n");
+    Print(L"╚═══════════════════════════════════════════════╝\r\n");
     Print(L"Running on UEFI firmware\r\n\r\n");
+    
+    // Select model
+    ModelType selected_model = select_model(ImageHandle, SystemTable);
+    if (selected_model == 0) {
+        Print(L"No model selected. Exiting...\r\n");
+        ST->BootServices->Stall(3000000); // 3 seconds
+        return EFI_NOT_FOUND;
+    }
+    
+    CHAR16* model_filename = get_model_filename(selected_model);
     
     Print(L"Initializing transformer...\r\n");
     
     // Allocate transformer
     Transformer transformer;
     
-    Print(L"Loading model from stories15M.bin...\r\n");
+    Print(L"Loading model from %s...\r\n", model_filename);
     
     // Load model (pass SystemTable)
-    EFI_STATUS Status = load_model(ImageHandle, SystemTable, &transformer, L"stories15M.bin");
+    EFI_STATUS Status = load_model(ImageHandle, SystemTable, &transformer, model_filename);
     if (EFI_ERROR(Status)) {
         Print(L"[ERROR] Failed to load model: %r\r\n", Status);
         Print(L"Press any key to exit...\r\n");
@@ -1450,6 +1602,9 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         ST->ConIn->ReadKeyStroke(ST->ConIn, &Key);
         return Status;
     }
+    
+    // Store selected model type in config
+    transformer.config.model_type = selected_model;
     
     Print(L"Model loaded. Config validated.\r\n");
     
@@ -1532,16 +1687,42 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     } else {
         // INTERACTIVE REPL MODE (AUTO-DEMO)
         Print(L"=== Interactive REPL Mode (Auto-Demo) ===\r\n");
-        Print(L"Generating 3 automatic story continuations...\r\n");
-        Print(L"(Keyboard input disabled in QEMU/OVMF)\r\n\r\n");
         
-        // Auto-demo prompts (keyboard doesn't work in QEMU)
-        const char* demo_prompts[] = {
-            "Once upon a time",
-            "The little girl",
-            "In the forest"
-        };
-        int num_prompts = 3;
+        // Select prompts based on model type
+        const char** demo_prompts;
+        int num_prompts;
+        
+        if (transformer.config.model_type == MODEL_TINYLLAMA_CHAT) {
+            Print(L"Chat model detected - Using conversational prompts\r\n");
+            Print(L"(Keyboard input disabled in QEMU/OVMF)\r\n\r\n");
+            static const char* chat_prompts[] = {
+                "Hello! How are you today?",
+                "What is the capital of France?",
+                "Tell me a joke"
+            };
+            demo_prompts = chat_prompts;
+            num_prompts = 3;
+        } else if (transformer.config.model_type == MODEL_NANOGPT) {
+            Print(L"GPT-2 model detected - Using completion prompts\r\n");
+            Print(L"(Keyboard input disabled in QEMU/OVMF)\r\n\r\n");
+            static const char* gpt_prompts[] = {
+                "The quick brown fox",
+                "In a distant galaxy",
+                "To be or not to be"
+            };
+            demo_prompts = gpt_prompts;
+            num_prompts = 3;
+        } else {
+            Print(L"Story model detected - Using story prompts\r\n");
+            Print(L"(Keyboard input disabled in QEMU/OVMF)\r\n\r\n");
+            static const char* story_prompts[] = {
+                "Once upon a time",
+                "The little girl",
+                "In the forest"
+            };
+            demo_prompts = story_prompts;
+            num_prompts = 3;
+        }
         
         char user_input[512];
         int conversation_pos = 0;  // Track position in conversation

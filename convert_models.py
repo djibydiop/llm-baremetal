@@ -125,11 +125,20 @@ def export_tinyllama_chat(pytorch_file, output_file):
     """
     Export TinyLlama-1.1B-Chat to binary format
     Config: 22 layers, 2048 dim, 32000 vocab
+    Supports both PyTorch (.bin/.pt) and SafeTensors (.safetensors) formats
     """
     print(f"Loading TinyLlama model from {pytorch_file}...")
     
-    # Load checkpoint
-    checkpoint = torch.load(pytorch_file, map_location='cpu')
+    # Load checkpoint - support both PyTorch and SafeTensors
+    if pytorch_file.endswith('.safetensors'):
+        from safetensors import safe_open
+        state_dict = {}
+        with safe_open(pytorch_file, framework="pt", device="cpu") as f:
+            for key in f.keys():
+                state_dict[key] = f.get_tensor(key)
+        checkpoint = None
+    else:
+        checkpoint = torch.load(pytorch_file, map_location='cpu')
     
     # TinyLlama configuration
     config = {
@@ -146,13 +155,14 @@ def export_tinyllama_chat(pytorch_file, output_file):
     for k, v in config.items():
         print(f"  {k}: {v}")
     
-    # Get model state dict
-    if 'model' in checkpoint:
-        state_dict = checkpoint['model']
-    elif 'state_dict' in checkpoint:
-        state_dict = checkpoint['state_dict']
-    else:
-        state_dict = checkpoint
+    # Get model state dict (if not already loaded from SafeTensors)
+    if checkpoint is not None:
+        if 'model' in checkpoint:
+            state_dict = checkpoint['model']
+        elif 'state_dict' in checkpoint:
+            state_dict = checkpoint['state_dict']
+        else:
+            state_dict = checkpoint
     
     print(f"\nWriting binary to {output_file}...")
     

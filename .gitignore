@@ -28,3 +28,9 @@ __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
+
+# HuggingFace cache and model files
+.cache/
+*.safetensors
+*.pt
+*_pytorch.bin

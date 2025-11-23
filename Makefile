@@ -46,17 +46,19 @@ $(LLAMA2): llama2.so
 clean:
 	rm -f $(LLAMA2_OBJ) llama2.so $(LLAMA2)
 
-# Create disk image with llama2 (stories15M)
+# Create disk image with multimodal models (stories15M + nanogpt)
 llama2-disk: $(LLAMA2)
-	@echo "Creating EFI disk image with LLaMA2..."
-	dd if=/dev/zero of=llama2-disk.img bs=1M count=128
+	@echo "Creating EFI disk image with Multimodal LLM..."
+	dd if=/dev/zero of=llama2-disk.img bs=1M count=640
 	mkfs.fat -F32 llama2-disk.img
 	mmd -i llama2-disk.img ::/EFI
 	mmd -i llama2-disk.img ::/EFI/BOOT
 	mcopy -i llama2-disk.img $(LLAMA2) ::/EFI/BOOT/BOOTX64.EFI
-	mcopy -i llama2-disk.img stories15M.bin ::/
+	@if [ -f stories15M.bin ]; then mcopy -i llama2-disk.img stories15M.bin ::/; echo "✓ Copied stories15M.bin"; fi
+	@if [ -f nanogpt.bin ]; then mcopy -i llama2-disk.img nanogpt.bin ::/; echo "✓ Copied nanogpt.bin"; fi
+	@if [ -f tinyllama_chat.bin ]; then mcopy -i llama2-disk.img tinyllama_chat.bin ::/; echo "✓ Copied tinyllama_chat.bin"; fi
 	mcopy -i llama2-disk.img tokenizer.bin ::/
-	@echo "Disk image created: llama2-disk.img (15M params + tokenizer)"
+	@echo "Disk image created: llama2-disk.img (multimodal)"
 
 # Test llama2 in QEMU
 test-llama2: llama2-disk

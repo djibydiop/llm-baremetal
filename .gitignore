@@ -22,3 +22,9 @@ qemu_output_captured.txt
 screenshot_output.txt
 qemu_screenshot.log
 qemu_*.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/

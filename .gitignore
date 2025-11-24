@@ -69,3 +69,15 @@ OVMF_VARS.fd
 tmp/
 temp/
 *.tmp
+
+# Test scripts (generated)
+full-test.sh
+just-build.sh
+quick-demo.ps1
+rebuild-and-test.ps1
+rebuild.py
+STATUS_REPORT.md
+
+# Build artifacts
+build*.log
+mnt/

@@ -1,24 +1,37 @@
-# 🚀 LLM Bare-Metal Bootloader
+# 🚀 LLM Bare-Metal Inference Engine
 
-**stories110M transformer running directly on UEFI firmware - no OS required.**
+**Run large language models directly on UEFI firmware - no operating system required.**
 
-## Features
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Platform: UEFI](https://img.shields.io/badge/Platform-UEFI-blue.svg)](https://uefi.org/)
+[![Language: C](https://img.shields.io/badge/Language-C-green.svg)](https://en.wikipedia.org/wiki/C_(programming_language))
 
-- 🔥 **Powerful**: 110M parameter GPT model (420MB)
-- 🚀 Bare-metal UEFI implementation (no operating system)
-- 🧠 stories110M: 12 layers, 768 dimensions, 12 attention heads
-- 🎯 **Interactive menu** with categorized prompts (Stories, Science, Adventure)
-- ⚡ **Optimized**: Loop unrolling + AVX2 (~1.5-2x speedup)
-- 🔤 **Complete BPE tokenizer** (32000 vocab)
-- 📊 Auto-demo mode for QEMU testing
+## 🎯 What is this?
 
-## Performance
+A fully functional **110M parameter transformer model** running on **bare UEFI firmware** without any operating system. Boot from USB, generate text instantly.
 
-| Model | Size | Architecture | QEMU | Real Hardware (est.) |
-|-------|------|--------------|------|---------------------|
-| **stories110M** | 420MB | 12L/768D/12H | 4-7 tok/s | 10-20 tok/s |
+**Key Innovation**: BPE tokenization + Transformer inference + UEFI APIs = OS-free LLM
 
-**Optimizations**: 4x/8x loop unrolling, AVX2 SIMD, KV cache
+## ✨ Features
+
+### Core Capabilities
+- 🧠 **stories110M**: 110M parameters, 12 layers, 768 dimensions, 12 attention heads
+- 🔤 **BPE Tokenizer**: Greedy longest-match encoding, 32K vocabulary
+- ⚡ **AVX2 Optimized**: SIMD instructions, 4x/8x loop unrolling, FMA
+- 🎯 **41 Prompts**: Across 6 categories (Stories, Science, Adventure, Philosophy, History, Tech)
+- 💾 **Persistent Storage**: Auto-save generations to disk
+- 🔄 **Multi-Model Support**: Detect and select stories15M/110M/llama2_7b
+- 🚀 **Bare-Metal**: Zero OS overhead, pure UEFI firmware
+
+### Performance
+
+| Model | Size | Architecture | QEMU (WSL) | Hardware (est.) |
+|-------|------|--------------|------------|-----------------|
+| **stories15M** | 60MB | 6L/288D/6H | ~15 tok/s | ~30 tok/s |
+| **stories110M** | 420MB | 12L/768D/12H | ~5 tok/s | ~15 tok/s |
+| **llama2_7b** | 13GB | 32L/4096D/32H | ~0.5 tok/s | ~2 tok/s |
+
+**Optimizations**: KV cache, loop unrolling, AVX2 SIMD (-mavx2 -mfma)
 
 ## Quick Start
 
@@ -79,11 +92,13 @@ Auto-demo cycles through **6 prompt categories** with **41 prompts**:
 Deploy to USB drive and boot on real UEFI hardware:
 
 **Windows**:
+
 ```powershell
 .\deploy-usb.ps1 -DriveLetter E
 ```
 
 **Linux**:
+
 ```bash
 sudo ./deploy-usb.sh /dev/sdX
 ```
@@ -91,6 +106,14 @@ sudo ./deploy-usb.sh /dev/sdX
 **Requirements**: UEFI firmware, x86-64 CPU with AVX2, 4GB+ RAM, Secure Boot disabled
 
 See [HARDWARE_BOOT.md](HARDWARE_BOOT.md) for complete guide, BIOS settings, and troubleshooting.
+
+---
+
+## 📚 Documentation
+
+- **[ROADMAP.md](ROADMAP.md)** - Future features and development plan
+- **[PHASE_8_9_REPORT.md](PHASE_8_9_REPORT.md)** - Multi-model + Persistent storage implementation
+- **[HARDWARE_BOOT.md](HARDWARE_BOOT.md)** - Complete USB boot guide
 
 ## Prerequisites
 

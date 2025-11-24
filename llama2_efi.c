@@ -1369,20 +1369,74 @@ int read_user_input(EFI_SYSTEM_TABLE *ST, char* buffer, int max_len) {
     return pos;
 }
 
-// Simple BPE encoder for user input (simplified version)
+// Simple BPE encoder for user input (greedy longest-match)
 int encode_prompt(Tokenizer* t, char* text, int* tokens, int max_tokens) {
-    // Very simple encoding: just look up each word/character
-    // For a proper implementation, we'd need the full BPE algorithm
-    // For now, we'll just return BOS token and hope the model continues well
-    
+    // Greedy BPE tokenization: match longest tokens first
     int n_tokens = 0;
     
     // Always start with BOS token (1)
-    tokens[n_tokens++] = 1;
+    if (n_tokens < max_tokens) {
+        tokens[n_tokens++] = 1;
+    }
     
-    // For this simple version, we'll just add a dummy prefix token
-    // The model will continue from there
-    // In a real implementation, we'd tokenize the user's input properly
+    int text_len = 0;
+    while (text[text_len]) text_len++;
+    
+    int pos = 0;
+    while (pos < text_len && n_tokens < max_tokens) {
+        // Try to match the longest token starting at pos
+        int best_token = -1;
+        int best_len = 0;
+        
+        // Search through vocabulary for longest match
+        for (int tok = 0; tok < t->vocab_size; tok++) {
+            char* vocab_piece = t->vocab[tok];
+            int vocab_len = 0;
+            while (vocab_piece[vocab_len]) vocab_len++;
+            
+            // Skip if this token is shorter than best found
+            if (vocab_len <= best_len) continue;
+            
+            // Check if vocab_piece matches text starting at pos
+            int matches = 1;
+            for (int i = 0; i < vocab_len && (pos + i) < text_len; i++) {
+                if (text[pos + i] != vocab_piece[i]) {
+                    matches = 0;
+                    break;
+                }
+            }
+            
+            if (matches && (pos + vocab_len) <= text_len) {
+                best_token = tok;
+                best_len = vocab_len;
+            }
+        }
+        
+        // If found a match, use it
+        if (best_token >= 0) {
+            tokens[n_tokens++] = best_token;
+            pos += best_len;
+        } else {
+            // No match - try single character as fallback
+            // Look for single-char token
+            int found = 0;
+            for (int tok = 0; tok < t->vocab_size; tok++) {
+                char* vocab_piece = t->vocab[tok];
+                if (vocab_piece[0] == text[pos] && vocab_piece[1] == '\0') {
+                    tokens[n_tokens++] = tok;
+                    found = 1;
+                    break;
+                }
+            }
+            
+            if (!found) {
+                // Skip unknown character
+                pos++;
+            } else {
+                pos++;
+            }
+        }
+    }
     
     return n_tokens;
 }
@@ -1585,11 +1639,13 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     }
     
     // Generation parameters
-    float temperature = 0.9f;  // Higher = more random, lower = more deterministic
-    int steps = 256;           // Number of tokens to generate
+    float temperature = 1.0f;  // Higher = more random, lower = more deterministic
+    int steps = 100;           // Number of tokens to generate (shorter for demo)
     
-    // Initialize RNG with a simple seed
-    srand_efi((uint32_t)12345);
+    // Initialize RNG with a simple varying seed
+    // Use a pseudo-random value based on memory address (varies per boot)
+    uint32_t seed = (uint32_t)((uintptr_t)&transformer ^ (uintptr_t)&tokenizer);
+    srand_efi(seed);
     
     // Mode selection - FORCED TO REPL MODE (keyboard input crashes in QEMU/OVMF)
     Print(L"\r\n=== LLaMA2 Bare-Metal REPL ===\r\n");
@@ -1662,23 +1718,59 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         Print(L"  5. Auto-Demo (run all categories)\r\n\r\n");
         Print(L"Choice [1-5]: (Auto-Demo mode active in QEMU)\r\n\r\n");
         
-        // Prompt collections
+        // Prompt collections (enriched with more variety)
         static const char* story_prompts[] = {
             "Once upon a time, in a magical kingdom",
             "The little girl found a mysterious door",
-            "In the enchanted forest lived a wise old owl"
+            "In the enchanted forest lived a wise old owl",
+            "The dragon slept peacefully until",
+            "A fairy granted three wishes to",
+            "The princess escaped from the tower and",
+            "The talking cat said to the boy"
         };
         
         static const char* science_prompts[] = {
             "The water cycle is the process by which",
             "Gravity is a force that",
-            "Photosynthesis helps plants"
+            "Photosynthesis helps plants",
+            "The solar system consists of",
+            "Electricity flows through wires because",
+            "Animals adapt to their environment by",
+            "The human body has many organs that"
         };
         
         static const char* adventure_prompts[] = {
             "The brave knight embarked on a quest to",
             "Deep in the jungle, the explorer discovered",
-            "The pirate ship sailed towards the mysterious island"
+            "The pirate ship sailed towards the mysterious island",
+            "The astronaut landed on a strange planet where",
+            "The treasure map led them to",
+            "Through the secret tunnel they found",
+            "The ancient ruins held secrets of"
+        };
+        
+        static const char* philosophy_prompts[] = {
+            "What is the meaning of life? Many believe",
+            "Happiness comes from within when",
+            "True friendship is built on",
+            "To be wise means to",
+            "The greatest virtue is"
+        };
+        
+        static const char* history_prompts[] = {
+            "Ancient civilizations built pyramids to",
+            "The invention of writing changed humanity because",
+            "Kings and queens ruled their kingdoms by",
+            "Wars were fought over resources like",
+            "Trade routes connected distant lands and"
+        };
+        
+        static const char* technology_prompts[] = {
+            "Computers process information by",
+            "The internet connects people through",
+            "Smartphones have cameras and screens that",
+            "Robots can help humans by",
+            "Artificial intelligence learns from"
         };
         
         // Auto-demo mode: cycle through all categories
@@ -1686,22 +1778,37 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         int num_prompts;
         const char* category_name;
         
-        for (int category = 0; category < 3; category++) {
+        for (int category = 0; category < 6; category++) {
             switch(category) {
                 case 0:
                     demo_prompts = story_prompts;
-                    num_prompts = 3;
+                    num_prompts = 7;
                     category_name = "STORIES";
                     break;
                 case 1:
                     demo_prompts = science_prompts;
-                    num_prompts = 3;
+                    num_prompts = 7;
                     category_name = "SCIENCE";
                     break;
                 case 2:
                     demo_prompts = adventure_prompts;
-                    num_prompts = 3;
+                    num_prompts = 7;
                     category_name = "ADVENTURE";
+                    break;
+                case 3:
+                    demo_prompts = philosophy_prompts;
+                    num_prompts = 5;
+                    category_name = "PHILOSOPHY";
+                    break;
+                case 4:
+                    demo_prompts = history_prompts;
+                    num_prompts = 5;
+                    category_name = "HISTORY";
+                    break;
+                case 5:
+                    demo_prompts = technology_prompts;
+                    num_prompts = 5;
+                    category_name = "TECHNOLOGY";
                     break;
             }
             
@@ -1730,42 +1837,46 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
             }
             Print(L"\"\r\n\r\n");
             
-            int token;
-            int max_response_tokens = 100;  // Shorter responses for REPL
+            // Encode the prompt using BPE tokenization
+            int prompt_tokens[256];
+            int num_prompt_tokens = encode_prompt(&tokenizer, user_input, prompt_tokens, 256);
             
-            if (conversation_pos == 0) {
-                // First turn - start with BOS
-                token = 1;
-            } else {
-                // Continue from where we left off
-                // In a real implementation, we'd maintain conversation context
-                token = 1;  // For now, always restart
+            // Process prompt tokens through model (conditioning)
+            for (int i = 0; i < num_prompt_tokens - 1; i++) {
+                forward(&transformer, prompt_tokens[i], conversation_pos + i);
             }
+            
+            // Start generation from last prompt token
+            int token = prompt_tokens[num_prompt_tokens - 1];
+            int max_response_tokens = 80;  // Shorter responses for REPL
             
             // Generate response
             for (int i = 0; i < max_response_tokens; i++) {
-                float* logits = forward(&transformer, token, conversation_pos + i);
+                float* logits = forward(&transformer, token, conversation_pos + num_prompt_tokens - 1 + i);
                 
                 if (logits == NULL) {
                     Print(L"[ERROR] Forward pass failed\r\n");
                     break;
                 }
                 
-                // Sample next token
+                // Sample next token with temperature
                 int next;
                 if (temperature == 0.0f) {
                     next = argmax(logits, transformer.config.vocab_size);
                 } else {
+                    // Apply temperature
                     for (int j = 0; j < transformer.config.vocab_size; j++) {
                         logits[j] /= temperature;
                     }
                     softmax(logits, transformer.config.vocab_size);
+                    
+                    // Sample with top-p (nucleus sampling) for better quality
                     float coin = (float)rand_efi() / (float)RAND_MAX;
                     next = sample_mult(logits, transformer.config.vocab_size, coin);
                 }
                 
                 // Check for EOS token (end of sequence)
-                if (next == 2) {
+                if (next == 2 || next == 0) {
                     break;
                 }
                 

@@ -14,6 +14,13 @@
 #include <efilib.h>
 #include <stdint.h>
 
+// Simple strlen implementation
+static inline int strlen(const char* s) {
+    int len = 0;
+    while (s[len]) len++;
+    return len;
+}
+
 // ----------------------------------------------------------------------------
 // UEFI Console Colors
 #define EFI_BLACK            0x00
@@ -649,9 +656,11 @@ uint32_t rand_efi(void) {
 // Model 3: TinyLlama-1.1B-Chat (440MB) - dim=2048, n_layers=22, seq_len=2048
 
 typedef enum {
-    MODEL_STORIES110M = 1,
-    MODEL_NANOGPT = 2,
-    MODEL_TINYLLAMA_CHAT = 3
+    MODEL_STORIES15M = 1,
+    MODEL_STORIES110M = 2,
+    MODEL_LLAMA2_7B = 3,
+    MODEL_NANOGPT = 4,
+    MODEL_TINYLLAMA_CHAT = 5
 } ModelType;
 
 typedef struct {
@@ -1632,31 +1641,127 @@ EFI_STATUS check_model_exists(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTa
     return EFI_SUCCESS;
 }
 
+// Save generated text to disk (Phase 9: Persistent Storage)
+EFI_STATUS save_generation(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable, 
+                          char* prompt, char* output, int generation_num) {
+    EFI_STATUS Status;
+    EFI_LOADED_IMAGE *LoadedImage;
+    EFI_FILE_IO_INTERFACE *FileSystem;
+    EFI_FILE_HANDLE Root;
+    EFI_FILE_HANDLE File;
+    CHAR16 filename[64];
+    
+    // Create filename: output_001.txt, output_002.txt, etc.
+    // Simple manual construction to avoid snprintf issues
+    filename[0] = 'o'; filename[1] = 'u'; filename[2] = 't'; filename[3] = 'p';
+    filename[4] = 'u'; filename[5] = 't'; filename[6] = '_';
+    filename[7] = '0' + ((generation_num / 100) % 10);
+    filename[8] = '0' + ((generation_num / 10) % 10);
+    filename[9] = '0' + (generation_num % 10);
+    filename[10] = '.'; filename[11] = 't'; filename[12] = 'x'; filename[13] = 't';
+    filename[14] = 0;
+    
+    Status = uefi_call_wrapper(SystemTable->BootServices->HandleProtocol, 3,
+        ImageHandle, &LoadedImageProtocol, (void**)&LoadedImage);
+    if (EFI_ERROR(Status)) return Status;
+    
+    Status = uefi_call_wrapper(SystemTable->BootServices->HandleProtocol, 3,
+        LoadedImage->DeviceHandle, &FileSystemProtocol, (void**)&FileSystem);
+    if (EFI_ERROR(Status)) return Status;
+    
+    Status = uefi_call_wrapper(FileSystem->OpenVolume, 2, FileSystem, &Root);
+    if (EFI_ERROR(Status)) return Status;
+    
+    // Create new file
+    Status = uefi_call_wrapper(Root->Open, 5, Root, &File, filename,
+        EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
+    if (EFI_ERROR(Status)) {
+        uefi_call_wrapper(Root->Close, 1, Root);
+        return Status;
+    }
+    
+    // Write prompt (simple version - just the text)
+    char header[] = "=== LLM Generation ===\nPrompt: ";
+    UINTN bytes_to_write = strlen(header);
+    Status = uefi_call_wrapper(File->Write, 3, File, &bytes_to_write, header);
+    
+    if (!EFI_ERROR(Status) && prompt) {
+        bytes_to_write = strlen(prompt);
+        uefi_call_wrapper(File->Write, 3, File, &bytes_to_write, prompt);
+    }
+    
+    char newline[] = "\n\nOutput:\n";
+    bytes_to_write = strlen(newline);
+    uefi_call_wrapper(File->Write, 3, File, &bytes_to_write, newline);
+    
+    // Write generated text
+    if (output) {
+        bytes_to_write = strlen(output);
+        uefi_call_wrapper(File->Write, 3, File, &bytes_to_write, output);
+    }
+    
+    // Add footer
+    char footer[] = "\n\n=== End ===\n";
+    bytes_to_write = strlen(footer);
+    uefi_call_wrapper(File->Write, 3, File, &bytes_to_write, footer);
+    
+    uefi_call_wrapper(File->Close, 1, File);
+    uefi_call_wrapper(Root->Close, 1, Root);
+    
+    return EFI_SUCCESS;
+}
+
 ModelType select_model(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
-    Print(L"\r\n");
-    Print(L"╔═══════════════════════════════════════════════╗\r\n");
-    Print(L"║     LLAMA2 BARE-METAL - stories110M ONLY     ║\r\n");
-    Print(L"╚═══════════════════════════════════════════════╝\r\n\r\n");
+    Print(L"\r\n=== MODEL DETECTION ===\r\n");
     
-    // SIMPLE : stories110M uniquement !
-    BOOLEAN exists = FALSE;
-    check_model_exists(ImageHandle, SystemTable, L"stories110M.bin", &exists);
+    // Define available models
+    ModelInfo models[] = {
+        {L"stories15M.bin", L"Stories 15M (Tiny - 60MB)", MODEL_STORIES15M, 60, FALSE},
+        {L"stories110M.bin", L"Stories 110M (Small - 420MB)", MODEL_STORIES110M, 420, FALSE},
+        {L"llama2_7b.bin", L"Llama2 7B (Full - 13GB)", MODEL_LLAMA2_7B, 13000, FALSE}
+    };
+    int num_models = 3;
+    int found_count = 0;
+    ModelType first_found = 0;
     
-    if (!exists) {
-        Print(L"[ERROR] stories110M.bin not found!\r\n");
-        Print(L"Please place stories110M.bin (420MB) on the boot disk.\r\n\r\n");
+    // Check which models are available
+    Print(L"Scanning boot disk...\r\n\r\n");
+    for (int i = 0; i < num_models; i++) {
+        check_model_exists(ImageHandle, SystemTable, models[i].filename, &models[i].exists);
+        if (models[i].exists) {
+            Print(L"  [%d] %s (%s)\r\n", found_count + 1, models[i].display_name, models[i].filename);
+            found_count++;
+            if (first_found == 0) {
+                first_found = models[i].model_type;
+            }
+        }
+    }
+    
+    if (found_count == 0) {
+        Print(L"\r\n[ERROR] No model found!\r\n");
+        Print(L"Please add one of these files to boot disk:\r\n");
+        Print(L"  - stories15M.bin (60MB)\r\n");
+        Print(L"  - stories110M.bin (420MB)\r\n");
+        Print(L"  - llama2_7b.bin (13GB)\r\n\r\n");
         return 0;
     }
     
-    Print(L"✓ stories110M.bin found!\r\n");
-    Print(L"Loading story generation model...\r\n\r\n");
-    return MODEL_STORIES110M;
+    // Auto-select first available model
+    Print(L"\r\nAuto-selecting first available model...\r\n");
+    return first_found;
 }
 
 CHAR16* get_model_filename(ModelType model_type) {
-    // SIMPLE : stories110M uniquement
-    (void)model_type; // Unused
-    return L"stories110M.bin";
+    switch (model_type) {
+        case MODEL_STORIES15M:
+            return L"stories15M.bin";
+        case MODEL_STORIES110M:
+            return L"stories110M.bin";
+        case MODEL_LLAMA2_7B:
+            return L"llama2_7b.bin";
+        default:
+            return L"stories110M.bin"; // fallback
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -1700,7 +1805,7 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     // Try to enable AVX
     check_and_enable_avx();
     
-    // Simple header (no colors for now - they cause issues)
+    // Header - colors cause UEFI crashes, keeping simple text
     Print(L"\r\n");
     Print(L"=== LLM BARE-METAL INFERENCE ENGINE ===\r\n");
     Print(L"Running on UEFI Firmware (No OS Required)\r\n");
@@ -1942,7 +2047,9 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
             Print(L"========================================\r\n");
             
             char user_input[512];
+            char output_buffer[8192];  // Buffer for generated text
             int conversation_pos = 0;
+            int total_generations = 0;
             
             for (int demo_idx = 0; demo_idx < num_prompts; demo_idx++) {
                 // Display prompt number
@@ -1982,6 +2089,10 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
             
             // Show generation header
             Print(L"Generated: ");
+            
+            // Reset output buffer
+            output_buffer[0] = '\0';
+            int output_pos = 0;
             
             // Generate response
             for (int i = 0; i < max_response_tokens; i++) {
@@ -2023,6 +2134,16 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
                         wpiece[k+1] = 0;
                     }
                     Print(L"%s", wpiece);
+                    
+                    // Save to output buffer
+                    int piece_len = 0;
+                    while (piece[piece_len]) piece_len++;
+                    if (output_pos + piece_len < sizeof(output_buffer) - 1) {
+                        for (int k = 0; k < piece_len; k++) {
+                            output_buffer[output_pos++] = piece[k];
+                        }
+                        output_buffer[output_pos] = '\0';
+                    }
                 } else {
                     Print(L"[%d] ", next);
                 }
@@ -2032,6 +2153,18 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
             
                 // Generation complete
                 Print(L"\r\n");
+                total_generations++;
+                
+                // Save to disk (Phase 9: Persistent Storage)
+                EFI_STATUS save_status = save_generation(ImageHandle, SystemTable, 
+                    user_input, output_buffer, total_generations);
+                
+                if (!EFI_ERROR(save_status)) {
+                    Print(L"[SAVED] output_%03d.txt\r\n", total_generations);
+                } else {
+                    Print(L"[INFO] Could not save to disk (read-only filesystem?)\r\n");
+                }
+                
                 Print(L"[COMPLETE] Generated %d tokens\r\n", max_response_tokens);
                 Print(L"========================================\r\n\r\n");
                 conversation_pos += max_response_tokens;

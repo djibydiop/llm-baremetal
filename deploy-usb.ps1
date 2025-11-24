@@ -48,13 +48,18 @@ Write-Host "[INFO] Copying UEFI bootloader..." -ForegroundColor Cyan
 Copy-Item "llama2_efi.efi" -Destination "$EFIBootPath\BOOTX64.EFI" -Force
 Write-Host "  ✓ BOOTX64.EFI copied" -ForegroundColor Green
 
-# Copy model file
-Write-Host "[INFO] Copying model (stories110M.bin - 420MB)..." -ForegroundColor Cyan
-if (Test-Path "stories110M.bin") {
+# Copy model file - use smaller stories15M for better USB boot compatibility
+Write-Host "[INFO] Copying model (stories15M.bin - 60MB)..." -ForegroundColor Cyan
+if (Test-Path "stories15M.bin") {
+    Copy-Item "stories15M.bin" -Destination "$USBPath\stories15M.bin" -Force
+    Write-Host "  ✓ stories15M.bin copied (better for USB boot)" -ForegroundColor Green
+} elseif (Test-Path "stories110M.bin") {
+    Write-Host "  [WARNING] stories15M.bin not found, using stories110M.bin (may be too large for some UEFI)" -ForegroundColor Yellow
     Copy-Item "stories110M.bin" -Destination "$USBPath\stories110M.bin" -Force
-    Write-Host "  ✓ stories110M.bin copied" -ForegroundColor Green
+    Write-Host "  ✓ stories110M.bin copied (420MB - may timeout on USB boot)" -ForegroundColor Yellow
 } else {
-    Write-Host "  [WARNING] stories110M.bin not found - download it separately!" -ForegroundColor Yellow
+    Write-Host "  [ERROR] No model file found!" -ForegroundColor Red
+    Write-Host "  Download stories15M.bin (recommended) or stories110M.bin" -ForegroundColor Red
 }
 
 # Copy tokenizer
@@ -77,7 +82,7 @@ on UEFI hardware without an operating system.
 
 Contents:
 - EFI\BOOT\BOOTX64.EFI - UEFI bootloader with LLM implementation
-- stories110M.bin - 110M parameter language model (420MB)
+- stories15M.bin - 15M parameter language model (60MB) - RECOMMENDED for USB boot
 - tokenizer.bin - BPE tokenizer for text encoding/decoding (434KB)
 
 Boot Instructions:
@@ -116,7 +121,7 @@ Write-Host "`n=== Deployment Complete ===" -ForegroundColor Green
 Write-Host "USB Drive: $USBPath" -ForegroundColor Cyan
 Write-Host "Files deployed:" -ForegroundColor Cyan
 Write-Host "  - EFI\BOOT\BOOTX64.EFI" -ForegroundColor White
-Write-Host "  - stories110M.bin (420MB)" -ForegroundColor White
+Write-Host "  - stories15M.bin (60MB) - Optimized for USB boot" -ForegroundColor White
 Write-Host "  - tokenizer.bin (434KB)" -ForegroundColor White
 Write-Host "  - README.txt" -ForegroundColor White
 Write-Host "`nYou can now boot from this USB drive on any UEFI x86-64 machine!" -ForegroundColor Green

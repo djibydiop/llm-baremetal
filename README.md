@@ -37,14 +37,60 @@ make clean && make && make disk
 sudo dd if=qemu-test.img of=/dev/sdX bs=4M
 ```
 
+## 🎬 Demo
+
+Record your own demo or watch it in action:
+
+```bash
+# Record demo (Windows)
+.\record-demo.ps1
+
+# Record demo (Linux/macOS)
+./record-demo.sh
+
+# Quick 30-second demo
+.\record-demo.ps1 -Duration 30
+```
+
+See [DEMO_GUIDE.md](DEMO_GUIDE.md) for recording tips and sharing options.
+
 ## Interactive Menu
 
-Auto-demo cycles through 3 prompt categories:
-- **Stories**: Fairy tales
-- **Science**: Educational content
-- **Adventure**: Exploration prompts
+Auto-demo cycles through **6 prompt categories** with **41 prompts**:
+
+- **Stories** (7 prompts): Fairy tales, dragons, princesses
+- **Science** (7 prompts): Physics, biology, astronomy  
+- **Adventure** (7 prompts): Knights, explorers, pirates
+- **Philosophy** (5 prompts): Life, wisdom, happiness
+- **History** (5 prompts): Civilizations, inventions
+- **Technology** (5 prompts): Computers, AI, robots
+
+**Features**:
+
+- ✅ BPE prompt encoding (understands context!)
+- ✅ Temperature-controlled generation
+- ✅ 80 tokens per response
+- ✅ Auto-progression through categories
 
 **Note**: Keyboard input works only on real UEFI hardware (not in QEMU).
+
+## 🖥️ Hardware Boot (Real Machines!)
+
+Deploy to USB drive and boot on real UEFI hardware:
+
+**Windows**:
+```powershell
+.\deploy-usb.ps1 -DriveLetter E
+```
+
+**Linux**:
+```bash
+sudo ./deploy-usb.sh /dev/sdX
+```
+
+**Requirements**: UEFI firmware, x86-64 CPU with AVX2, 4GB+ RAM, Secure Boot disabled
+
+See [HARDWARE_BOOT.md](HARDWARE_BOOT.md) for complete guide, BIOS settings, and troubleshooting.
 
 ## Prerequisites
 

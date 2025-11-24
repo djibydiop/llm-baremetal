@@ -1,6 +1,7 @@
 # Large model files (download separately)
-*.bin
+# But allow tokenizer.bin (small, required for text decoding)
 !tokenizer.bin
+*.bin
 
 # Disk images
 *.img

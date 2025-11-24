@@ -1,163 +1,225 @@
-# 🚀 LLM Bare-Metal Inference Engine
+# LLM Bare-Metal UEFI Bootloader
 
-**Run large language models directly on UEFI firmware - no operating system required.**
+🚀 **Run Large Language Models directly on bare-metal hardware without an operating system**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Platform: UEFI](https://img.shields.io/badge/Platform-UEFI-blue.svg)](https://uefi.org/)
-[![Language: C](https://img.shields.io/badge/Language-C-green.svg)](https://en.wikipedia.org/wiki/C_(programming_language))
+A lightweight UEFI bootloader that loads and runs transformer models (LLaMA2, TinyLlama) with optimized inference on x86-64 hardware.
 
-## 🎯 What is this?
+---
 
-A fully functional **110M parameter transformer model** running on **bare UEFI firmware** without any operating system. Boot from USB, generate text instantly.
+## 🎯 Features
 
-**Key Innovation**: BPE tokenization + Transformer inference + UEFI APIs = OS-free LLM
+- ✅ **OS-Free LLM Inference** - Boot directly into AI without Windows/Linux
+- ✅ **UEFI Boot** - Works on modern PC hardware (2010+)
+- ✅ **USB Bootable** - Create bootable USB drives
+- ✅ **AVX2/FMA Optimized** - Hardware SIMD acceleration
+- ✅ **Multiple Models** - Support for 15M to 110M parameter models
+- ✅ **Interactive Prompts** - 41 pre-configured prompts across 6 categories
+- ✅ **BPE Tokenization** - Full text encoding/decoding
 
-## ✨ Features
+---
 
-### Core Capabilities
-- 🧠 **stories110M**: 110M parameters, 12 layers, 768 dimensions, 12 attention heads
-- 🔤 **BPE Tokenizer**: Greedy longest-match encoding, 32K vocabulary
-- ⚡ **AVX2 Optimized**: SIMD instructions, 4x/8x loop unrolling, FMA
-- 🎯 **41 Prompts**: Across 6 categories (Stories, Science, Adventure, Philosophy, History, Tech)
-- 💾 **Persistent Storage**: Auto-save generations to disk
-- 🔄 **Multi-Model Support**: Detect and select stories15M/110M/llama2_7b
-- 🚀 **Bare-Metal**: Zero OS overhead, pure UEFI firmware
+## 📦 Quick Start
 
-### Performance
+### Prerequisites
 
-| Model | Size | Architecture | QEMU (WSL) | Hardware (est.) |
-|-------|------|--------------|------------|-----------------|
-| **stories15M** | 60MB | 6L/288D/6H | ~15 tok/s | ~30 tok/s |
-| **stories110M** | 420MB | 12L/768D/12H | ~5 tok/s | ~15 tok/s |
-| **llama2_7b** | 13GB | 32L/4096D/32H | ~0.5 tok/s | ~2 tok/s |
+- **Hardware**: x86-64 CPU with AVX2 support, 4GB+ RAM
+- **Build Environment**: Linux/WSL with GCC and GNU-EFI
+- **Tools**: `make`, `gcc`, `objcopy`
 
-**Optimizations**: KV cache, loop unrolling, AVX2 SIMD (-mavx2 -mfma)
-
-## Quick Start
+### 1. Clone Repository
 
 ```bash
-# 1. Download model (420MB)
-bash download_stories110m.sh
-
-# 2. Build
-make clean && make && make disk
-
-# 3. Test in QEMU
-./test-qemu.sh          # Linux/macOS/WSL
-.\test-qemu.ps1         # Windows
-
-# 4. Boot on real hardware (USB)
-sudo dd if=qemu-test.img of=/dev/sdX bs=4M
+git clone https://github.com/djibydiop/llm-baremetal.git
+cd llm-baremetal
 ```
 
-## 🎬 Demo
+### 2. Download Model Files
 
-Record your own demo or watch it in action:
+Download the model and tokenizer (not included in repo due to size):
 
 ```bash
-# Record demo (Windows)
-.\record-demo.ps1
+# Option 1: stories15M (60MB) - RECOMMENDED for USB boot
+wget https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.bin
 
-# Record demo (Linux/macOS)
-./record-demo.sh
+# Option 2: stories110M (420MB) - Larger, may timeout on some UEFI
+wget https://huggingface.co/karpathy/tinyllamas/resolve/main/stories110M.bin
 
-# Quick 30-second demo
-.\record-demo.ps1 -Duration 30
+# Tokenizer (required)
+wget https://github.com/karpathy/llama2.c/raw/master/tokenizer.bin
 ```
 
-See [DEMO_GUIDE.md](DEMO_GUIDE.md) for recording tips and sharing options.
+### 3. Build UEFI Bootloader
 
-## Interactive Menu
+```bash
+make clean && make
+```
 
-Auto-demo cycles through **6 prompt categories** with **41 prompts**:
+This produces:
+- `llama2.efi` - UEFI bootloader with LLM inference
 
-- **Stories** (7 prompts): Fairy tales, dragons, princesses
-- **Science** (7 prompts): Physics, biology, astronomy  
-- **Adventure** (7 prompts): Knights, explorers, pirates
-- **Philosophy** (5 prompts): Life, wisdom, happiness
-- **History** (5 prompts): Civilizations, inventions
-- **Technology** (5 prompts): Computers, AI, robots
-
-**Features**:
-
-- ✅ BPE prompt encoding (understands context!)
-- ✅ Temperature-controlled generation
-- ✅ 80 tokens per response
-- ✅ Auto-progression through categories
-
-**Note**: Keyboard input works only on real UEFI hardware (not in QEMU).
-
-## 🖥️ Hardware Boot (Real Machines!)
-
-Deploy to USB drive and boot on real UEFI hardware:
-
-**Windows**:
+### 4. Deploy to USB (Windows)
 
 ```powershell
+# Format USB as FAT32 (drive letter E: in this example)
+# Then run deployment script:
 .\deploy-usb.ps1 -DriveLetter E
 ```
 
-**Linux**:
+### 5. Deploy to USB (Linux)
 
 ```bash
-sudo ./deploy-usb.sh /dev/sdX
+sudo ./deploy-usb.sh /dev/sdX  # Replace sdX with your USB device
 ```
 
-**Requirements**: UEFI firmware, x86-64 CPU with AVX2, 4GB+ RAM, Secure Boot disabled
+See `USB_BOOT_GUIDE.md` for detailed USB deployment instructions.
 
-See [HARDWARE_BOOT.md](HARDWARE_BOOT.md) for complete guide, BIOS settings, and troubleshooting.
+---
+
+## 📂 Repository Structure
+
+```
+llm-baremetal/
+├── llama2_efi.c          # Main UEFI bootloader source (2200 lines)
+├── Makefile              # Build configuration
+├── deploy-usb.ps1        # USB deployment script (Windows)
+├── deploy-usb.sh         # USB deployment script (Linux)
+├── download_stories110m.sh  # Model download helper
+├── .gitignore            # Git ignore rules
+├── LICENSE               # MIT License
+├── README.md             # This file
+├── ROADMAP.md            # Development roadmap
+├── USB_BOOT_GUIDE.md     # USB boot instructions
+├── HARDWARE_BOOT.md      # Hardware compatibility guide
+│
+└── Files to download separately:
+    ├── stories15M.bin       # 15M param model (60MB) - RECOMMENDED
+    ├── stories110M.bin      # 110M param model (420MB)
+    └── tokenizer.bin        # BPE tokenizer (434KB)
+```
+
+---
+
+## 🔧 Supported Models
+
+| Model | Size | Parameters | Recommended Use |
+|-------|------|------------|-----------------|
+| **stories15M** | 60MB | 15M | ✅ USB boot (fast, reliable) |
+| stories110M | 420MB | 110M | Desktop/VM (larger context) |
+| llama2_7b | 13GB | 7B | High-memory systems only |
+
+**Note:** `stories15M.bin` is recommended for USB boot as it loads completely without timeout issues.
+
+---
+
+## 🎮 Interactive Menu
+
+After booting, you'll see an interactive menu with 6 categories:
+
+1. **Stories** (7 prompts) - Fairy tales, dragons, princesses
+2. **Science** (7 prompts) - Water cycle, gravity, solar system
+3. **Adventure** (7 prompts) - Knights, explorers, pirates
+4. **Philosophy** (5 prompts) - Meaning of life, happiness
+5. **History** (5 prompts) - Ancient civilizations, inventions
+6. **Technology** (5 prompts) - Computers, internet, AI
+
+Select a category, then choose a prompt to generate text.
+
+---
+
+## 🚀 Hardware Requirements
+
+### Minimum
+- x86-64 CPU with AVX2 support (Intel Haswell 2013+, AMD Excavator 2015+)
+- 4GB RAM
+- UEFI firmware
+- USB 2.0+ (for USB boot)
+
+### Recommended
+- Intel Core i5/i7 (4th gen+) or AMD Ryzen
+- 8GB RAM
+- USB 3.0+
+
+### BIOS Settings
+- **UEFI boot mode** (not Legacy/CSM)
+- **Secure Boot disabled**
+- **Fast Boot disabled** (optional, helps with debugging)
+
+---
+
+## 🐛 Troubleshooting
+
+### Boot stops at "127580KB read"
+**Solution:** Model file too large for your UEFI firmware. Use `stories15M.bin` (60MB) instead of `stories110M.bin` (420MB).
+
+### "No bootable device" error
+**Solution:** 
+1. Ensure USB is FAT32 formatted
+2. Check UEFI boot mode (not Legacy)
+3. Disable Secure Boot in BIOS
+
+### "AVX2 not supported" error
+**Solution:** Your CPU doesn't support AVX2. Minimum requirement is Intel Haswell (2013) or AMD Excavator (2015).
+
+### Slow inference (< 10 tokens/sec)
+**Solution:**
+1. Enable AVX2 in BIOS (if available)
+2. Use smaller model (stories15M vs stories110M)
+3. Increase RAM allocation in QEMU/VM
 
 ---
 
 ## 📚 Documentation
 
-- **[ROADMAP.md](ROADMAP.md)** - Future features and development plan
-- **[PHASE_8_9_REPORT.md](PHASE_8_9_REPORT.md)** - Multi-model + Persistent storage implementation
-- **[HARDWARE_BOOT.md](HARDWARE_BOOT.md)** - Complete USB boot guide
+- **[USB_BOOT_GUIDE.md](USB_BOOT_GUIDE.md)** - Detailed USB deployment guide
+- **[HARDWARE_BOOT.md](HARDWARE_BOOT.md)** - Hardware compatibility and testing
+- **[ROADMAP.md](ROADMAP.md)** - Development roadmap and future features
 
-## Prerequisites
+---
 
-```bash
-# Ubuntu/Debian
-sudo apt install build-essential gnu-efi qemu-system-x86 ovmf mtools
+## 🤝 Contributing
 
-# Fedora/RHEL
-sudo dnf install gcc binutils gnu-efi-devel qemu-system-x86 edk2-ovmf mtools
+Contributions welcome! Please:
 
-# macOS
-brew install qemu  # gnu-efi may need manual install
-```
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit changes (`git commit -m 'Add amazing feature'`)
+4. Push to branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
-## Architecture
+---
 
-**Model**: stories110M (HuggingFace)  
-**Layers**: 12 transformer layers, 768 dimensions, 12 attention heads  
-**Tokenizer**: BPE with 32K vocabulary  
-**Implementation**: Based on [llama2.c](https://github.com/karpathy/llama2.c) (MIT license)  
-**Environment**: Bare-metal UEFI via gnu-efi  
-**Optimizations**: Loop unrolling (4x/8x), AVX2 SIMD (-mavx2 -mfma)  
-**CPU**: Requires Haswell or newer (AVX2 support)
+## 📜 License
 
-## Files
+MIT License - see [LICENSE](LICENSE) file for details.
 
-- `llama2_efi.c` - Main implementation (~1800 lines)
-- `Makefile` - Build with AVX2 optimizations
-- `download_stories110m.sh` - Model downloader
-- `test-qemu.sh` / `test-qemu.ps1` - QEMU test scripts
-- `train_stories101m.*` / `train_stories260m.*` - Training scripts
+Based on [llama2.c](https://github.com/karpathy/llama2.c) by Andrej Karpathy.
 
-## Training Your Own Model
+---
 
-```bash
-# Train stories101M on GPU (~350MB model)
-bash train_stories101m.sh
+## 🙏 Credits
 
-# Train stories260M (requires powerful GPU)
-bash train_stories260m.sh
-```
+- **Andrej Karpathy** - Original llama2.c implementation
+- **Meta AI** - LLaMA2 model architecture
+- **TinyStories Dataset** - Training data for stories models
+- **GNU-EFI** - UEFI development libraries
 
-Training scripts use TinyStories dataset and export to `.bin` format compatible with the bootloader.
+---
 
-## License
+## 📞 Contact
 
-MIT License
+- **GitHub Issues**: [Report bugs or request features](https://github.com/djibydiop/llm-baremetal/issues)
+- **Repository**: https://github.com/djibydiop/llm-baremetal
+
+---
+
+## ⚠️ Important Notes
+
+1. **Model files not included** - Download `stories15M.bin` and `tokenizer.bin` separately (see Quick Start)
+2. **USB boot timeout fix** - Use `stories15M.bin` (60MB) instead of `stories110M.bin` (420MB) for reliable USB boot
+3. **UEFI only** - Does not work with Legacy BIOS
+4. **AVX2 required** - CPU must support AVX2 instructions
+
+---
+
+**Last Updated:** November 24, 2025  
+**Version:** 1.0.0

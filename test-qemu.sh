@@ -51,5 +51,4 @@ qemu-system-x86_64 \
     -drive file=qemu-test.img,format=raw \
     -m 4G \
     -cpu Haswell \
-    -nographic \
-    -serial stdio
+    -nographic

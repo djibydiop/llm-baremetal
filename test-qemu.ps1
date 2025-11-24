@@ -32,4 +32,4 @@ Write-Host "Appuyez sur Ctrl+C dans cette fenetre pour arreter" -ForegroundColor
 Write-Host ""
 
 # Lancer QEMU avec CPU Haswell
-wsl bash -c "cd /mnt/c/Users/djibi/Desktop/yama_oo/yama_oo/llm-baremetal && qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd -drive file=qemu-test.img,format=raw -m 4G -cpu Haswell -nographic -serial mon:stdio 2>&1"
+wsl bash -c "cd /mnt/c/Users/djibi/Desktop/yama_oo/yama_oo/llm-baremetal && qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd -drive file=qemu-test.img,format=raw -m 4G -cpu Haswell -nographic 2>&1"

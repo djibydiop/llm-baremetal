@@ -1,36 +1,70 @@
-# Ignore build artifacts
-*.o
-*.so
-*.efi
+# Large model files (download separately)
+*.bin
+!tokenizer.bin
+
+# Disk images
 *.img
+*.iso
+*.qcow2
+
+# Compiled binaries
+*.efi
+*.o
+*.obj
+*.a
+*.lib
+*.so
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+ENV/
+.pytest_cache/
+
+# Training outputs
+out-*/
+checkpoints/
+*.ckpt
+*.pth
+*.pt
+
+# Data directories
+data/
+TinyStories/
+tinystories_data/
+
+# Logs
+*.log
+qemu_*.txt
+log*.txt
 
 # IDE
 .vscode/
 .vs/
+.idea/
+*.swp
+*.swo
+*~
 
-# OS
+# OS files
 .DS_Store
 Thumbs.db
-*.bin
-*.img
-*.log
+desktop.ini
 
-# QEMU debug outputs
-qemu_logits_debug.txt
-qemu_logits_test.txt
-qemu_output_captured.txt
-screenshot_output.txt
-qemu_screenshot.log
-qemu_*.txt
+# OVMF firmware
+OVMF.fd
+OVMF_CODE.fd
+OVMF_VARS.fd
 
-# Python
-__pycache__/
-*.pyc
-*.pyo
-.pytest_cache/
-
-# HuggingFace cache and model files
+# HuggingFace cache
 .cache/
 *.safetensors
-*.pt
 *_pytorch.bin
+
+# Temporary files
+tmp/
+temp/
+*.tmp

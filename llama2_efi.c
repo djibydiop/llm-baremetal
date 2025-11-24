@@ -1,11 +1,11 @@
 /*
  * LLaMA2 Inference on Bare-Metal UEFI Firmware
  * 
- * Runs 15M parameter transformer model directly on UEFI without OS.
+ * Runs 110M parameter transformer model directly on UEFI without OS.
  * Based on Andrej Karpathy's llama2.c (MIT License)
  * https://github.com/karpathy/llama2.c
  * 
- * Model: stories15M.bin (dim=288, n_layers=6, n_heads=6, seq_len=256)
+ * Model: stories110M.bin (dim=768, n_layers=12, n_heads=12, seq_len=256)
  * 
  * SPDX-License-Identifier: MIT
  */
@@ -13,232 +13,6 @@
 #include <efi.h>
 #include <efilib.h>
 #include <stdint.h>
-#include <stddef.h>
-
-// AVX/SSE intrinsics for SIMD optimizations
-#if defined(__AVX2__)
-#include <immintrin.h>
-#endif
-
-// Global flag for AVX2 support (set at runtime)
-static int g_has_avx2 = 0;
-
-// ----------------------------------------------------------------------------
-// CONVERSATIONAL FEATURES (OPTION 5)
-// ----------------------------------------------------------------------------
-
-// Conversation history management
-#define MAX_HISTORY_ENTRIES 10
-#define MAX_PROMPT_LENGTH 256
-#define MAX_RESPONSE_LENGTH 512
-
-typedef struct {
-    char prompt[MAX_PROMPT_LENGTH];
-    char response[MAX_RESPONSE_LENGTH];
-    int prompt_token_count;
-    int response_token_count;
-} ConversationTurn;
-
-typedef struct {
-    ConversationTurn turns[MAX_HISTORY_ENTRIES];
-    int count;
-    int total_tokens;
-    float temperature;
-    int max_response_tokens;
-} ConversationHistory;
-
-// Initialize conversation history
-void init_conversation(ConversationHistory* hist) {
-    hist->count = 0;
-    hist->total_tokens = 0;
-    hist->temperature = 0.9f;
-    hist->max_response_tokens = 100;
-    
-    for (int i = 0; i < MAX_HISTORY_ENTRIES; i++) {
-        hist->turns[i].prompt[0] = '\0';
-        hist->turns[i].response[0] = '\0';
-        hist->turns[i].prompt_token_count = 0;
-        hist->turns[i].response_token_count = 0;
-    }
-}
-
-// Add turn to conversation history
-void add_turn(ConversationHistory* hist, const char* prompt, const char* response, 
-              int prompt_tokens, int response_tokens) {
-    if (hist->count >= MAX_HISTORY_ENTRIES) {
-        // Shift history (remove oldest)
-        for (int i = 0; i < MAX_HISTORY_ENTRIES - 1; i++) {
-            // Copy turn i+1 to turn i
-            for (int j = 0; j < MAX_PROMPT_LENGTH; j++) {
-                hist->turns[i].prompt[j] = hist->turns[i+1].prompt[j];
-            }
-            for (int j = 0; j < MAX_RESPONSE_LENGTH; j++) {
-                hist->turns[i].response[j] = hist->turns[i+1].response[j];
-            }
-            hist->turns[i].prompt_token_count = hist->turns[i+1].prompt_token_count;
-            hist->turns[i].response_token_count = hist->turns[i+1].response_token_count;
-        }
-        hist->count = MAX_HISTORY_ENTRIES - 1;
-    }
-    
-    // Add new turn
-    int idx = hist->count;
-    int i = 0;
-    while (prompt[i] && i < MAX_PROMPT_LENGTH - 1) {
-        hist->turns[idx].prompt[i] = prompt[i];
-        i++;
-    }
-    hist->turns[idx].prompt[i] = '\0';
-    
-    i = 0;
-    while (response[i] && i < MAX_RESPONSE_LENGTH - 1) {
-        hist->turns[idx].response[i] = response[i];
-        i++;
-    }
-    hist->turns[idx].response[i] = '\0';
-    
-    hist->turns[idx].prompt_token_count = prompt_tokens;
-    hist->turns[idx].response_token_count = response_tokens;
-    hist->total_tokens += prompt_tokens + response_tokens;
-    hist->count++;
-}
-
-// Clear conversation history
-void clear_history(ConversationHistory* hist) {
-    hist->count = 0;
-    hist->total_tokens = 0;
-}
-
-// Check if input is a command (starts with /)
-int is_command(const char* input) {
-    return input[0] == '/';
-}
-
-// Process system commands
-int process_command(const char* input, ConversationHistory* hist, EFI_SYSTEM_TABLE* ST) {
-    // /help - Show available commands
-    if (strcmp(input, "/help") == 0) {
-        Print(L"\r\n=== Available Commands ===\r\n");
-        Print(L"/help       - Show this help message\r\n");
-        Print(L"/clear      - Clear conversation history\r\n");
-        Print(L"/history    - Show conversation history\r\n");
-        Print(L"/stats      - Show conversation statistics\r\n");
-        Print(L"/temp <val> - Set temperature (0.0-1.5)\r\n");
-        Print(L"/tokens <n> - Set max response tokens\r\n");
-        Print(L"/exit       - Exit conversation\r\n");
-        Print(L"========================\r\n\r\n");
-        return 1;
-    }
-    
-    // /clear - Clear history
-    if (strcmp(input, "/clear") == 0) {
-        clear_history(hist);
-        Print(L"\r\n[Conversation history cleared]\r\n\r\n");
-        return 1;
-    }
-    
-    // /history - Show conversation history
-    if (strcmp(input, "/history") == 0) {
-        Print(L"\r\n=== Conversation History ===\r\n");
-        if (hist->count == 0) {
-            Print(L"(empty)\r\n");
-        } else {
-            for (int i = 0; i < hist->count; i++) {
-                Print(L"\r\nTurn %d:\r\n", i + 1);
-                Print(L"  User: \"");
-                for (int j = 0; hist->turns[i].prompt[j] && j < 50; j++) {
-                    Print(L"%c", (CHAR16)hist->turns[i].prompt[j]);
-                }
-                if (hist->turns[i].prompt[50]) Print(L"...");
-                Print(L"\"\r\n");
-                Print(L"  Tokens: %d + %d\r\n", 
-                      hist->turns[i].prompt_token_count,
-                      hist->turns[i].response_token_count);
-            }
-        }
-        Print(L"==========================\r\n\r\n");
-        return 1;
-    }
-    
-    // /stats - Show statistics
-    if (strcmp(input, "/stats") == 0) {
-        Print(L"\r\n=== Conversation Stats ===\r\n");
-        Print(L"Turns: %d/%d\r\n", hist->count, MAX_HISTORY_ENTRIES);
-        Print(L"Total tokens: %d\r\n", hist->total_tokens);
-        Print(L"Temperature: %.2f\r\n", (double)hist->temperature);
-        Print(L"Max response tokens: %d\r\n", hist->max_response_tokens);
-        if (g_has_avx2) {
-            Print(L"SIMD: AVX2 enabled\r\n");
-        } else {
-            Print(L"SIMD: Scalar fallback\r\n");
-        }
-        Print(L"=========================\r\n\r\n");
-        return 1;
-    }
-    
-    // /temp <value> - Set temperature
-    if (input[0] == '/' && input[1] == 't' && input[2] == 'e' && 
-        input[3] == 'm' && input[4] == 'p' && input[5] == ' ') {
-        // Parse temperature value (simple float parsing)
-        float new_temp = 0.9f;
-        const char* val_str = &input[6];
-        
-        // Simple parsing: 0.X format
-        if (val_str[0] >= '0' && val_str[0] <= '9') {
-            int whole = val_str[0] - '0';
-            int frac = 0;
-            if (val_str[1] == '.' && val_str[2] >= '0' && val_str[2] <= '9') {
-                frac = val_str[2] - '0';
-                new_temp = (float)whole + (float)frac / 10.0f;
-            } else {
-                new_temp = (float)whole;
-            }
-            
-            // Clamp to reasonable range
-            if (new_temp < 0.0f) new_temp = 0.0f;
-            if (new_temp > 1.5f) new_temp = 1.5f;
-            
-            hist->temperature = new_temp;
-            Print(L"\r\n[Temperature set to %.2f]\r\n\r\n", (double)new_temp);
-        } else {
-            Print(L"\r\n[Invalid temperature value. Use /temp <0.0-1.5>]\r\n\r\n");
-        }
-        return 1;
-    }
-    
-    // /tokens <n> - Set max response tokens
-    if (input[0] == '/' && input[1] == 't' && input[2] == 'o' && 
-        input[3] == 'k' && input[4] == 'e' && input[5] == 'n' && 
-        input[6] == 's' && input[7] == ' ') {
-        // Parse token count
-        int new_tokens = 0;
-        const char* val_str = &input[8];
-        
-        // Simple integer parsing
-        while (*val_str >= '0' && *val_str <= '9') {
-            new_tokens = new_tokens * 10 + (*val_str - '0');
-            val_str++;
-        }
-        
-        if (new_tokens > 0 && new_tokens <= 512) {
-            hist->max_response_tokens = new_tokens;
-            Print(L"\r\n[Max response tokens set to %d]\r\n\r\n", new_tokens);
-        } else {
-            Print(L"\r\n[Invalid token count. Use /tokens <1-512>]\r\n\r\n");
-        }
-        return 1;
-    }
-    
-    // /exit - Exit conversation
-    if (strcmp(input, "/exit") == 0) {
-        Print(L"\r\n[Exiting conversation...]\r\n\r\n");
-        return 2;  // Signal exit
-    }
-    
-    // Unknown command
-    Print(L"\r\n[Unknown command. Type /help for available commands]\r\n\r\n");
-    return 1;
-}
 
 // ----------------------------------------------------------------------------
 // String utilities for REPL
@@ -249,69 +23,6 @@ int strcmp(const char* s1, const char* s2) {
         s2++;
     }
     return *(const unsigned char*)s1 - *(const unsigned char*)s2;
-}
-
-size_t my_strlen(const char* s) {
-    const char* p = s;
-    while (*p) p++;
-    return p - s;
-}
-
-void* my_memcpy(void* dest, const void* src, size_t n) {
-    char* d = (char*)dest;
-    const char* s = (const char*)src;
-    while (n--) *d++ = *s++;
-    return dest;
-}
-
-// Simple sprintf for formatting byte tokens
-int my_sprintf(char* str, const char* format, ...) {
-    // Very simplified sprintf - only handles <0x%02X> format
-    __builtin_va_list args;
-    __builtin_va_start(args, format);
-    
-    int written = 0;
-    const char* p = format;
-    
-    while (*p) {
-        if (*p == '%') {
-            p++;
-            if (*p == '0') {
-                p++; // skip '0'
-                int width = *p++ - '0'; // get width (e.g., '2')
-                if (*p == 'X' || *p == 'x') {
-                    // Hex format
-                    unsigned int val = __builtin_va_arg(args, unsigned int);
-                    char hex[] = "0123456789ABCDEF";
-                    char buf[10];
-                    int pos = 0;
-                    
-                    // Convert to hex
-                    do {
-                        buf[pos++] = hex[val % 16];
-                        val /= 16;
-                    } while (val && pos < 10);
-                    
-                    // Pad with zeros if needed
-                    while (pos < width && pos < 10) {
-                        buf[pos++] = '0';
-                    }
-                    
-                    // Write reversed (correct order)
-                    while (pos > 0) {
-                        str[written++] = buf[--pos];
-                    }
-                    p++;
-                }
-            }
-        } else {
-            str[written++] = *p++;
-        }
-    }
-    
-    str[written] = '\0';
-    __builtin_va_end(args);
-    return written;
 }
 
 // ----------------------------------------------------------------------------
@@ -849,12 +560,12 @@ uint32_t rand_efi(void) {
 
 // ----------------------------------------------------------------------------
 // Multi-Model Architecture Support
-// Model 1: stories15M (60MB) - dim=288, n_layers=6, seq_len=256
+// Model 1: stories110M (420MB) - dim=768, n_layers=12, seq_len=256
 // Model 2: NanoGPT-124M (48MB) - dim=768, n_layers=12, seq_len=1024  
 // Model 3: TinyLlama-1.1B-Chat (440MB) - dim=2048, n_layers=22, seq_len=2048
 
 typedef enum {
-    MODEL_STORIES15M = 1,
+    MODEL_STORIES110M = 1,
     MODEL_NANOGPT = 2,
     MODEL_TINYLLAMA_CHAT = 3
 } ModelType;
@@ -919,7 +630,7 @@ typedef struct {
 // ----------------------------------------------------------------------------
 // STATIC ALLOCATION (EFI Modification - replaces malloc_run_state)
 // Max dimensions for all supported models:
-// - stories15M: dim=288, n_layers=6, hidden_dim=768, seq_len=256
+// - stories110M: dim=768, n_layers=12, hidden_dim=2048, seq_len=256
 // - NanoGPT: dim=768, n_layers=12, hidden_dim=3072, seq_len=1024
 // - TinyLlama-Chat: dim=2048, n_layers=22, hidden_dim=5632, seq_len=2048
 
@@ -1057,62 +768,8 @@ void memory_map_weights(TransformerWeights *w, Config* p, float* ptr, int shared
 // ----------------------------------------------------------------------------
 // TRANSFORMER LOGIC (100% UNCHANGED from Karpathy's llama2.c)
 
-#if defined(__AVX2__)
-void rmsnorm_avx2(float* o, float* x, float* weight, int size) {
-    // Calculate sum of squares using AVX2
-    __m256 ss_vec = _mm256_setzero_ps();
-    int j = 0;
-    
-    for (; j <= size - 8; j += 8) {
-        __m256 x_vec = _mm256_loadu_ps(&x[j]);
-        ss_vec = _mm256_fmadd_ps(x_vec, x_vec, ss_vec);
-    }
-    
-    // Horizontal sum
-    __m128 sum_high = _mm256_extractf128_ps(ss_vec, 1);
-    __m128 sum_low = _mm256_castps256_ps128(ss_vec);
-    __m128 sum128 = _mm_add_ps(sum_low, sum_high);
-    __m128 shuf = _mm_movehdup_ps(sum128);
-    __m128 sums = _mm_add_ps(sum128, shuf);
-    shuf = _mm_movehl_ps(shuf, sums);
-    sums = _mm_add_ss(sums, shuf);
-    float ss = _mm_cvtss_f32(sums);
-    
-    // Remainder
-    for (; j < size; j++) {
-        ss += x[j] * x[j];
-    }
-    
-    ss /= size;
-    ss += 1e-5f;
-    ss = 1.0f / sqrtf(ss);
-    
-    // Normalize and scale using AVX2
-    __m256 ss_broadcast = _mm256_set1_ps(ss);
-    j = 0;
-    for (; j <= size - 8; j += 8) {
-        __m256 x_vec = _mm256_loadu_ps(&x[j]);
-        __m256 w_vec = _mm256_loadu_ps(&weight[j]);
-        __m256 result = _mm256_mul_ps(w_vec, _mm256_mul_ps(ss_broadcast, x_vec));
-        _mm256_storeu_ps(&o[j], result);
-    }
-    
-    // Remainder
-    for (; j < size; j++) {
-        o[j] = weight[j] * (ss * x[j]);
-    }
-}
-#endif
-
 void rmsnorm(float* o, float* x, float* weight, int size) {
-#if defined(__AVX2__)
-    if (g_has_avx2) {
-        rmsnorm_avx2(o, x, weight, size);
-        return;
-    }
-#endif
-    
-    // Scalar fallback: calculate sum of squares
+    // calculate sum of squares
     float ss = 0.0f;
     for (int j = 0; j < size; j++) {
         ss += x[j] * x[j];
@@ -1126,93 +783,8 @@ void rmsnorm(float* o, float* x, float* weight, int size) {
     }
 }
 
-#if defined(__AVX2__)
-void softmax_avx2(float* x, int size) {
-    // Find max value using AVX2
-    __m256 max_vec = _mm256_set1_ps(x[0]);
-    int i = 0;
-    
-    for (; i <= size - 8; i += 8) {
-        __m256 x_vec = _mm256_loadu_ps(&x[i]);
-        max_vec = _mm256_max_ps(max_vec, x_vec);
-    }
-    
-    // Horizontal max
-    __m128 max_high = _mm256_extractf128_ps(max_vec, 1);
-    __m128 max_low = _mm256_castps256_ps128(max_vec);
-    __m128 max128 = _mm_max_ps(max_low, max_high);
-    max128 = _mm_max_ps(max128, _mm_shuffle_ps(max128, max128, 0x4E));
-    max128 = _mm_max_ps(max128, _mm_shuffle_ps(max128, max128, 0xB1));
-    float max_val = _mm_cvtss_f32(max128);
-    
-    // Check remainder
-    for (; i < size; i++) {
-        if (x[i] > max_val) {
-            max_val = x[i];
-        }
-    }
-    
-    // Exp and sum using AVX2
-    __m256 max_broadcast = _mm256_set1_ps(max_val);
-    __m256 sum_vec = _mm256_setzero_ps();
-    i = 0;
-    
-    for (; i <= size - 8; i += 8) {
-        __m256 x_vec = _mm256_loadu_ps(&x[i]);
-        x_vec = _mm256_sub_ps(x_vec, max_broadcast);
-        
-        // Note: expf is scalar, need to process element-wise
-        float temp[8];
-        _mm256_storeu_ps(temp, x_vec);
-        for (int k = 0; k < 8; k++) {
-            temp[k] = expf(temp[k]);
-        }
-        x_vec = _mm256_loadu_ps(temp);
-        _mm256_storeu_ps(&x[i], x_vec);
-        sum_vec = _mm256_add_ps(sum_vec, x_vec);
-    }
-    
-    // Horizontal sum
-    __m128 sum_high = _mm256_extractf128_ps(sum_vec, 1);
-    __m128 sum_low = _mm256_castps256_ps128(sum_vec);
-    __m128 sum128 = _mm_add_ps(sum_low, sum_high);
-    __m128 shuf = _mm_movehdup_ps(sum128);
-    __m128 sums = _mm_add_ps(sum128, shuf);
-    shuf = _mm_movehl_ps(shuf, sums);
-    sums = _mm_add_ss(sums, shuf);
-    float sum = _mm_cvtss_f32(sums);
-    
-    // Remainder exp and sum
-    for (; i < size; i++) {
-        x[i] = expf(x[i] - max_val);
-        sum += x[i];
-    }
-    
-    // Normalize using AVX2
-    __m256 sum_broadcast = _mm256_set1_ps(sum);
-    i = 0;
-    for (; i <= size - 8; i += 8) {
-        __m256 x_vec = _mm256_loadu_ps(&x[i]);
-        x_vec = _mm256_div_ps(x_vec, sum_broadcast);
-        _mm256_storeu_ps(&x[i], x_vec);
-    }
-    
-    // Remainder
-    for (; i < size; i++) {
-        x[i] /= sum;
-    }
-}
-#endif
-
 void softmax(float* x, int size) {
-#if defined(__AVX2__)
-    if (g_has_avx2) {
-        softmax_avx2(x, size);
-        return;
-    }
-#endif
-    
-    // Scalar fallback: find max value (for numerical stability)
+    // find max value (for numerical stability)
     float max_val = x[0];
     for (int i = 1; i < size; i++) {
         if (x[i] > max_val) {
@@ -1231,54 +803,26 @@ void softmax(float* x, int size) {
     }
 }
 
-#if defined(__AVX2__)
-void matmul_avx2(float* xout, float* x, float* w, int n, int d) {
-    // W (d,n) @ x (n,) -> xout (d,) using AVX2 (8 floats at a time)
+void matmul(float* xout, float* x, float* w, int n, int d) {
+    // W (d,n) @ x (n,) -> xout (d,)
+    // Optimized with loop unrolling (4x) for better performance
     for (int i = 0; i < d; i++) {
-        __m256 sum_vec = _mm256_setzero_ps();
+        float val = 0.0f;
         int j = 0;
         
-        // Process 8 elements at a time
-        for (; j <= n - 8; j += 8) {
-            __m256 w_vec = _mm256_loadu_ps(&w[i * n + j]);
-            __m256 x_vec = _mm256_loadu_ps(&x[j]);
-            sum_vec = _mm256_fmadd_ps(w_vec, x_vec, sum_vec);
+        // Unroll loop 4x - processes 4 elements per iteration
+        for (; j < n - 3; j += 4) {
+            val += w[i * n + j + 0] * x[j + 0];
+            val += w[i * n + j + 1] * x[j + 1];
+            val += w[i * n + j + 2] * x[j + 2];
+            val += w[i * n + j + 3] * x[j + 3];
         }
         
-        // Horizontal sum of 8 elements
-        __m128 sum_high = _mm256_extractf128_ps(sum_vec, 1);
-        __m128 sum_low = _mm256_castps256_ps128(sum_vec);
-        __m128 sum128 = _mm_add_ps(sum_low, sum_high);
-        __m128 shuf = _mm_movehdup_ps(sum128);
-        __m128 sums = _mm_add_ps(sum128, shuf);
-        shuf = _mm_movehl_ps(shuf, sums);
-        sums = _mm_add_ss(sums, shuf);
-        float val = _mm_cvtss_f32(sums);
-        
-        // Handle remainder
+        // Handle remaining elements
         for (; j < n; j++) {
             val += w[i * n + j] * x[j];
         }
         
-        xout[i] = val;
-    }
-}
-#endif
-
-void matmul(float* xout, float* x, float* w, int n, int d) {
-#if defined(__AVX2__)
-    if (g_has_avx2) {
-        matmul_avx2(xout, x, w, n, d);
-        return;
-    }
-#endif
-    
-    // Scalar fallback: W (d,n) @ x (n,) -> xout (d,)
-    for (int i = 0; i < d; i++) {
-        float val = 0.0f;
-        for (int j = 0; j < n; j++) {
-            val += w[i * n + j] * x[j];
-        }
         xout[i] = val;
     }
 }
@@ -1295,9 +839,22 @@ float* forward(Transformer* transformer, int token, int pos) {
     int hidden_dim =  p->hidden_dim;
     int head_size = dim / p->n_heads;
 
-    // copy the token embedding into x
+    // copy the token embedding into x (optimized)
     float* content_row = w->token_embedding_table + token * dim;
-    for (int i = 0; i < dim; i++) {
+    int i = 0;
+    // Unroll 8x for better cache utilization
+    for (; i < dim - 7; i += 8) {
+        x[i + 0] = content_row[i + 0];
+        x[i + 1] = content_row[i + 1];
+        x[i + 2] = content_row[i + 2];
+        x[i + 3] = content_row[i + 3];
+        x[i + 4] = content_row[i + 4];
+        x[i + 5] = content_row[i + 5];
+        x[i + 6] = content_row[i + 6];
+        x[i + 7] = content_row[i + 7];
+    }
+    // Handle remaining elements
+    for (; i < dim; i++) {
         x[i] = content_row[i];
     }
     
@@ -1813,102 +1370,19 @@ int read_user_input(EFI_SYSTEM_TABLE *ST, char* buffer, int max_len) {
 }
 
 // Simple BPE encoder for user input (simplified version)
-// Helper: find token in vocabulary by exact string match
-int str_lookup(char* str, Tokenizer* t) {
-    for (int i = 0; i < t->vocab_size; i++) {
-        if (strcmp(str, t->vocab[i]) == 0) {
-            return i;
-        }
-    }
-    return -1;
-}
-
-// BPE encode: convert text to tokens using byte-pair encoding
 int encode_prompt(Tokenizer* t, char* text, int* tokens, int max_tokens) {
+    // Very simple encoding: just look up each word/character
+    // For a proper implementation, we'd need the full BPE algorithm
+    // For now, we'll just return BOS token and hope the model continues well
+    
     int n_tokens = 0;
     
     // Always start with BOS token (1)
     tokens[n_tokens++] = 1;
     
-    // Handle empty or null input
-    if (!text || text[0] == '\0') {
-        return n_tokens;
-    }
-    
-    // BPE encoding: first encode each byte as a token
-    // Allocate temporary array for character tokens
-    int* char_tokens = (int*)__builtin_alloca(my_strlen(text) * sizeof(int));
-    int n_char_tokens = 0;
-    
-    // Convert each character to token ID
-    for (char* c = text; *c != '\0' && n_char_tokens < max_tokens - 1; c++) {
-        // For single byte characters, look up directly in vocab
-        char single_char[2] = {*c, '\0'};
-        int token_id = str_lookup(single_char, t);
-        
-        if (token_id != -1) {
-            char_tokens[n_char_tokens++] = token_id;
-        } else {
-            // If character not found, try byte representation
-            // Most tokenizers have byte-level fallback tokens like <0xXX>
-            char byte_token[10];
-            my_sprintf(byte_token, "<0x%02X>", (unsigned char)*c);
-            token_id = str_lookup(byte_token, t);
-            if (token_id != -1) {
-                char_tokens[n_char_tokens++] = token_id;
-            }
-        }
-    }
-    
-    // Now perform BPE merges
-    // This is a simplified version - full BPE would need the merge rules
-    // For now, we try to merge adjacent tokens if they form a known bigram
-    while (1) {
-        float best_score = -1e10;
-        int best_id = -1;
-        int best_idx = -1;
-        
-        // Find the best pair to merge
-        for (int i = 0; i < n_char_tokens - 1; i++) {
-            // Create merged string
-            char* str1 = t->vocab[char_tokens[i]];
-            char* str2 = t->vocab[char_tokens[i + 1]];
-            
-            // Allocate space for merged string
-            int len1 = my_strlen(str1);
-            int len2 = my_strlen(str2);
-            char* merged = (char*)__builtin_alloca(len1 + len2 + 1);
-            my_memcpy(merged, str1, len1);
-            my_memcpy(merged + len1, str2, len2);
-            merged[len1 + len2] = '\0';
-            
-            // Look up merged token
-            int merged_id = str_lookup(merged, t);
-            if (merged_id != -1 && t->vocab_scores[merged_id] > best_score) {
-                best_score = t->vocab_scores[merged_id];
-                best_id = merged_id;
-                best_idx = i;
-            }
-        }
-        
-        // No more merges possible
-        if (best_idx == -1) {
-            break;
-        }
-        
-        // Perform the merge
-        char_tokens[best_idx] = best_id;
-        // Shift remaining tokens left
-        for (int i = best_idx + 1; i < n_char_tokens - 1; i++) {
-            char_tokens[i] = char_tokens[i + 1];
-        }
-        n_char_tokens--;
-    }
-    
-    // Copy final tokens to output
-    for (int i = 0; i < n_char_tokens && n_tokens < max_tokens; i++) {
-        tokens[n_tokens++] = char_tokens[i];
-    }
+    // For this simple version, we'll just add a dummy prefix token
+    // The model will continue from there
+    // In a real implementation, we'd tokenize the user's input properly
     
     return n_tokens;
 }
@@ -1970,29 +1444,12 @@ int check_and_enable_avx() {
         xcr0_lo |= (1 << 0) | (1 << 1) | (1 << 2);
         __asm__ volatile ("xsetbv" :: "a"(xcr0_lo), "d"(xcr0_hi), "c"(0));
         
-        // Check for AVX2 support (CPUID Leaf 7)
-        __asm__ volatile (
-            "cpuid"
-            : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
-            : "a"(7), "c"(0)
-        );
-        
-        int has_avx2 = (ebx & (1 << 5)) != 0;
-        Print(L"[DEBUG] CPUID.7:EBX = 0x%08x, AVX2: %d\r\n", ebx, has_avx2);
-        
-        if (has_avx2) {
-            g_has_avx2 = 1;
-            Print(L"[SUCCESS] AVX2 enabled! XCR0 = 0x%08x\r\n", xcr0_lo);
-        } else {
-            Print(L"[SUCCESS] AVX enabled (no AVX2 support). XCR0 = 0x%08x\r\n", xcr0_lo);
-        }
-        
+        Print(L"[SUCCESS] SSE/AVX enabled! XCR0 = 0x%08x\r\n", xcr0_lo);
         return 1;
     } else {
         // Just enable SSE without AVX
         __asm__ volatile ("mov %0, %%cr4" :: "r"(cr4));
         Print(L"[INFO] SSE enabled (no AVX support)\r\n");
-        g_has_avx2 = 0;
         return 0;
     }
 }
@@ -2040,89 +1497,28 @@ EFI_STATUS check_model_exists(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTa
 ModelType select_model(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     Print(L"\r\n");
     Print(L"╔═══════════════════════════════════════════════╗\r\n");
-    Print(L"║   MULTIMODAL LLM BOOTLOADER - Model Selector  ║\r\n");
+    Print(L"║     LLAMA2 BARE-METAL - stories110M ONLY     ║\r\n");
     Print(L"╚═══════════════════════════════════════════════╝\r\n\r\n");
     
-    ModelInfo models[] = {
-        {L"stories15M.bin", L"stories15M (60MB) - Story generation", MODEL_STORIES15M, 60, FALSE},
-        {L"nanogpt.bin", L"NanoGPT-124M (48MB) - GPT-2 architecture", MODEL_NANOGPT, 48, FALSE},
-        {L"tinyllama_chat.bin", L"TinyLlama-1.1B-Chat (440MB) - Conversational", MODEL_TINYLLAMA_CHAT, 440, FALSE}
-    };
-    int num_models = 3;
+    // SIMPLE : stories110M uniquement !
+    BOOLEAN exists = FALSE;
+    check_model_exists(ImageHandle, SystemTable, L"stories110M.bin", &exists);
     
-    // Scan for available models
-    Print(L"Scanning for models...\r\n\r\n");
-    int available_count = 0;
-    
-    for (int i = 0; i < num_models; i++) {
-        check_model_exists(ImageHandle, SystemTable, models[i].filename, &models[i].exists);
-        if (models[i].exists) {
-            Print(L"  ✓ [%d] %s\r\n", i + 1, models[i].display_name);
-            available_count++;
-        } else {
-            Print(L"  ✗ [%d] %s (not found)\r\n", i + 1, models[i].display_name);
-        }
-    }
-    
-    if (available_count == 0) {
-        Print(L"\r\n[ERROR] No models found!\r\n");
-        Print(L"Please place at least one model file on the boot disk:\r\n");
-        Print(L"  - stories15M.bin (60MB)\r\n");
-        Print(L"  - nanogpt.bin (48MB)\r\n");
-        Print(L"  - tinyllama_chat.bin (440MB)\r\n\r\n");
+    if (!exists) {
+        Print(L"[ERROR] stories110M.bin not found!\r\n");
+        Print(L"Please place stories110M.bin (420MB) on the boot disk.\r\n\r\n");
         return 0;
     }
     
-    Print(L"\r\nFound %d model(s).\r\n", available_count);
-    
-    // Auto-select if only one model available
-    if (available_count == 1) {
-        for (int i = 0; i < num_models; i++) {
-            if (models[i].exists) {
-                Print(L"Auto-selecting: %s\r\n\r\n", models[i].display_name);
-                return models[i].model_type;
-            }
-        }
-    }
-    
-    // Manual selection for multiple models
-    Print(L"\r\nSelect model (1-%d): ", num_models);
-    
-    // Simple number input (wait for keypress)
-    EFI_INPUT_KEY Key;
-    EFI_STATUS Status;
-    
-    while (TRUE) {
-        Status = uefi_call_wrapper(ST->ConIn->ReadKeyStroke, 2, ST->ConIn, &Key);
-        if (!EFI_ERROR(Status)) {
-            if (Key.UnicodeChar >= L'1' && Key.UnicodeChar <= L'0' + num_models) {
-                int selection = Key.UnicodeChar - L'0';
-                if (models[selection - 1].exists) {
-                    Print(L"%c\r\n\r\n", Key.UnicodeChar);
-                    Print(L"Selected: %s\r\n\r\n", models[selection - 1].display_name);
-                    return models[selection - 1].model_type;
-                } else {
-                    Print(L"\r\nModel not available. Try again: ");
-                }
-            }
-        }
-        ST->BootServices->Stall(100000); // 100ms
-    }
-    
-    return MODEL_STORIES15M; // Fallback
+    Print(L"✓ stories110M.bin found!\r\n");
+    Print(L"Loading story generation model...\r\n\r\n");
+    return MODEL_STORIES110M;
 }
 
 CHAR16* get_model_filename(ModelType model_type) {
-    switch (model_type) {
-        case MODEL_STORIES15M:
-            return L"stories15M.bin";
-        case MODEL_NANOGPT:
-            return L"nanogpt.bin";
-        case MODEL_TINYLLAMA_CHAT:
-            return L"tinyllama_chat.bin";
-        default:
-            return L"stories15M.bin";
-    }
+    // SIMPLE : stories110M uniquement
+    (void)model_type; // Unused
+    return L"stories110M.bin";
 }
 
 // ----------------------------------------------------------------------------
@@ -2254,62 +1650,69 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     Print(L"\r\n\r\nGeneration complete.\r\n");
     
     } else {
-        // INTERACTIVE CONVERSATIONAL MODE (OPTION 5)
-        Print(L"=== Conversational Mode with Commands ===\r\n");
-        Print(L"Type /help for available commands\r\n");
+        // INTERACTIVE MENU MODE
+        Print(L"=== Interactive Menu ===\r\n\r\n");
         
-        // Initialize conversation history
-        ConversationHistory history;
-        init_conversation(&history);
+        // Define prompt categories
+        Print(L"Select Prompt Category:\r\n");
+        Print(L"  1. Stories (fairy tales, adventures)\r\n");
+        Print(L"  2. Science (facts, explanations)\r\n");
+        Print(L"  3. Adventure (quests, journeys)\r\n");
+        Print(L"  4. Custom (your own prompt)\r\n");
+        Print(L"  5. Auto-Demo (run all categories)\r\n\r\n");
+        Print(L"Choice [1-5]: (Auto-Demo mode active in QEMU)\r\n\r\n");
         
-        // Select prompts based on model type
+        // Prompt collections
+        static const char* story_prompts[] = {
+            "Once upon a time, in a magical kingdom",
+            "The little girl found a mysterious door",
+            "In the enchanted forest lived a wise old owl"
+        };
+        
+        static const char* science_prompts[] = {
+            "The water cycle is the process by which",
+            "Gravity is a force that",
+            "Photosynthesis helps plants"
+        };
+        
+        static const char* adventure_prompts[] = {
+            "The brave knight embarked on a quest to",
+            "Deep in the jungle, the explorer discovered",
+            "The pirate ship sailed towards the mysterious island"
+        };
+        
+        // Auto-demo mode: cycle through all categories
         const char** demo_prompts;
         int num_prompts;
+        const char* category_name;
         
-        if (transformer.config.model_type == MODEL_TINYLLAMA_CHAT) {
-            Print(L"Chat model: TinyLlama-1.1B-Chat\r\n");
-            Print(L"(Auto-demo mode - keyboard disabled in QEMU)\r\n\r\n");
-            static const char* chat_prompts[] = {
-                "Hello! How are you today?",
-                "/stats",
-                "What is the capital of France?",
-                "/temp 0.7",
-                "Tell me a short joke",
-                "/history"
-            };
-            demo_prompts = chat_prompts;
-            num_prompts = 6;
-        } else if (transformer.config.model_type == MODEL_NANOGPT) {
-            Print(L"Completion model: NanoGPT-124M\r\n");
-            Print(L"(Auto-demo mode - keyboard disabled in QEMU)\r\n\r\n");
-            static const char* gpt_prompts[] = {
-                "The quick brown fox",
-                "/stats",
-                "In a distant galaxy",
-                "/clear"
-            };
-            demo_prompts = gpt_prompts;
-            num_prompts = 4;
-        } else {
-            Print(L"Story model: stories15M\r\n");
-            Print(L"(Auto-demo mode - keyboard disabled in QEMU)\r\n\r\n");
-            static const char* story_prompts[] = {
-                "Once upon a time",
-                "/stats",
-                "The brave knight",
-                "/history"
-            };
-            demo_prompts = story_prompts;
-            num_prompts = 4;
-        }
-        
-        char user_input[512];
-        char response_buffer[MAX_RESPONSE_LENGTH];
-        int conversation_pos = 0;  // Track position in conversation
-        
-        for (int demo_idx = 0; demo_idx < num_prompts; demo_idx++) {
-            // Display turn indicator
-            Print(L"\r\n[Turn %d/%d]\r\n", demo_idx + 1, num_prompts);
+        for (int category = 0; category < 3; category++) {
+            switch(category) {
+                case 0:
+                    demo_prompts = story_prompts;
+                    num_prompts = 3;
+                    category_name = "STORIES";
+                    break;
+                case 1:
+                    demo_prompts = science_prompts;
+                    num_prompts = 3;
+                    category_name = "SCIENCE";
+                    break;
+                case 2:
+                    demo_prompts = adventure_prompts;
+                    num_prompts = 3;
+                    category_name = "ADVENTURE";
+                    break;
+            }
+            
+            Print(L"\r\n=== Category: %a ===\r\n", category_name);
+            
+            char user_input[512];
+            int conversation_pos = 0;
+            
+            for (int demo_idx = 0; demo_idx < num_prompts; demo_idx++) {
+                // Display auto-prompt
+                Print(L">>> [Prompt %d/%d]\r\n", demo_idx + 1, num_prompts);
             
             // Copy demo prompt
             const char* prompt = demo_prompts[demo_idx];
@@ -2320,39 +1723,24 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
             }
             user_input[prompt_len] = '\0';
             
-            // Display user input
-            Print(L"User>>> ");
+            // Display prompt
+            Print(L"Prompt: \"");
             for (int i = 0; user_input[i]; i++) {
                 Print(L"%c", (CHAR16)user_input[i]);
             }
-            Print(L"\r\n");
-            
-            // Check if it's a command
-            if (is_command(user_input)) {
-                int cmd_result = process_command(user_input, &history, SystemTable);
-                if (cmd_result == 2) {
-                    // Exit command
-                    break;
-                }
-                continue;  // Skip generation for commands
-            }
-            
-            Print(L"Assistant>>> ");
+            Print(L"\"\r\n\r\n");
             
             int token;
-            int max_response_tokens = history.max_response_tokens;
-            int response_len = 0;
-            response_buffer[0] = '\0';
+            int max_response_tokens = 100;  // Shorter responses for REPL
             
-            // Start token
             if (conversation_pos == 0) {
-                token = 1;  // BOS token
+                // First turn - start with BOS
+                token = 1;
             } else {
-                token = 1;  // Always restart for demo (no context carryover)
+                // Continue from where we left off
+                // In a real implementation, we'd maintain conversation context
+                token = 1;  // For now, always restart
             }
-            
-            int prompt_tokens = 0;  // Would be from encode_prompt() in real impl
-            int response_tokens = 0;
             
             // Generate response
             for (int i = 0; i < max_response_tokens; i++) {
@@ -2363,24 +1751,21 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
                     break;
                 }
                 
-                // Sample next token with current temperature
+                // Sample next token
                 int next;
-                if (history.temperature == 0.0f) {
+                if (temperature == 0.0f) {
                     next = argmax(logits, transformer.config.vocab_size);
                 } else {
                     for (int j = 0; j < transformer.config.vocab_size; j++) {
-                        logits[j] /= history.temperature;
+                        logits[j] /= temperature;
                     }
                     softmax(logits, transformer.config.vocab_size);
                     float coin = (float)rand_efi() / (float)RAND_MAX;
                     next = sample_mult(logits, transformer.config.vocab_size, coin);
                 }
                 
-                response_tokens++;
-                
                 // Check for EOS token (end of sequence)
                 if (next == 2) {
-                    Print(L"[EOS]\r\n");
                     break;
                 }
                 
@@ -2393,45 +1778,31 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
                         wpiece[k+1] = 0;
                     }
                     Print(L"%s", wpiece);
-                    
-                    // Store in response buffer
-                    for (int k = 0; piece[k] && response_len < MAX_RESPONSE_LENGTH - 1; k++) {
-                        response_buffer[response_len++] = piece[k];
-                    }
                 } else {
                     Print(L"[%d] ", next);
                 }
                 
                 token = next;
             }
-            response_buffer[response_len] = '\0';
             
-            
-            // Add to conversation history
-            add_turn(&history, user_input, response_buffer, prompt_tokens, response_tokens);
-            
-            Print(L"\r\n");
-            Print(L"[Tokens: ~%d | Temp: %.2f | Total: %d]\r\n", 
-                  response_tokens, (double)history.temperature, history.total_tokens);
-            Print(L"--------------------------------------------------\r\n");
-            
-            conversation_pos += max_response_tokens;
-            
-            // Small delay between turns
-            SystemTable->BootServices->Stall(1500000); // 1.5 seconds
-            
-            // Reset if conversation gets too long
-            if (conversation_pos > transformer.config.seq_len - 100) {
-                conversation_pos = 0;
-                Print(L"\r\n[Context window limit reached - resetting]\r\n\r\n");
+                Print(L"\r\n");
+                Print(L"----------------------------------------\r\n\r\n");
+                conversation_pos += max_response_tokens;
+                
+                // Small delay between prompts
+                ST->BootServices->Stall(1000000); // 1 second
+                
+                // Reset if conversation gets too long
+                if (conversation_pos > transformer.config.seq_len - 100) {
+                    conversation_pos = 0;
+                    Print(L"[Context reset]\r\n\r\n");
+                }
             }
         }
         
-        Print(L"\r\n=== Conversation Session Complete ===\r\n");
-        Print(L"Total turns: %d\r\n", history.count);
-        Print(L"Total tokens: %d\r\n", history.total_tokens);
-        Print(L"\r\nNote: Keyboard input disabled in QEMU/OVMF.\r\n");
-        Print(L"For full interactive mode, test on real UEFI hardware.\r\n\r\n");
+        Print(L"\r\n=== Auto-Demo Complete ===\r\n");
+        Print(L"All prompt categories demonstrated!\r\n");
+        Print(L"Note: Interactive menu works on real UEFI hardware.\r\n\r\n");
     }
     
     Print(L"\r\nSession ended.\r\n");

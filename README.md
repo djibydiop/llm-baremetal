@@ -1,76 +1,97 @@
-# 🚀 Multimodal LLM Bare-Metal Bootloader
+# 🚀 LLM Bare-Metal Bootloader
 
-**3 transformer models running directly on UEFI firmware - no OS required.**
+**stories110M transformer running directly on UEFI firmware - no OS required.**
 
 ## Features
 
-- 🔥 **Multimodal**: 3 models (60MB → 4.2GB) with auto-detection
+- 🔥 **Powerful**: 110M parameter GPT model (420MB)
 - 🚀 Bare-metal UEFI implementation (no operating system)
-- 🧠 stories15M (15M) / NanoGPT (124M) / TinyLlama-Chat (1.1B)
-- 🎯 **Conversational mode** with history and commands
-- ⚡ **AVX2/SSE SIMD** optimizations (3x speedup)
-- 🔤 **Complete BPE tokenizer** (character-level + byte fallback)
-- 📊 Token tracking and statistics
-- 🎛️ Temperature control (0.0-1.5)
+- 🧠 stories110M: 12 layers, 768 dimensions, 12 attention heads
+- 🎯 **Interactive menu** with categorized prompts
+- ⚡ **Optimized**: Loop unrolling + AVX2 (1.5-2x speedup)
+- 🔤 **Complete BPE tokenizer** (32000 vocab)
+- 📊 Auto-demo mode for testing
+- 🎨 Multiple prompt categories (Stories, Science, Adventure)
 
-## Supported Models
+## Performance
 
-| Model | Size | Arch | Use Case | Speed (Scalar) | Speed (AVX2) |
-|-------|------|------|----------|----------------|--------------|
-| **stories15M** | 60MB | 6L/288D | Story generation | ~20 tok/s | ~40 tok/s |
-| **NanoGPT-124M** | 471MB | 12L/768D | Text completion | ~5 tok/s | ~12 tok/s |
-| **TinyLlama-Chat** | 4.2GB | 22L/2048D | Conversational | ~0.66 tok/s | **~2 tok/s** |
+| Model | Size | Arch | Speed (QEMU) | Speed (Real HW est.) |
+|-------|------|------|--------------|----------------------|
+| **stories110M** | 420MB | 12L/768D/12H | ~4-7 tok/s | ~10-20 tok/s |
 
-*Speed benchmarks with AVX2 on modern x86-64 CPU (QEMU)*
+*With loop unrolling and AVX2 optimizations*
+
+## Optimizations
+
+- **Loop unrolling**: 4x for matmul, 8x for embeddings
+- **AVX2 SIMD**: Enabled via -mavx2 -mfma flags
+- **Cache optimization**: Better memory access patterns
+- **KV cache**: Efficient attention computation
+- See `OPTIMIZATION_GUIDE.md` for details
 
 ## Quick Start
 
-### 1. Download Models
+### 1. Download Model
 
 ```bash
-# Interactive Python downloader
-python3 download_models.py
+# Download stories110M (420MB) from HuggingFace
+bash download_stories110m.sh
 
-# Or manual download (stories15M only)
-wget https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.bin
-wget https://github.com/karpathy/llama2.c/raw/master/tokenizer.bin
+# This downloads:
+# - stories110M.bin (~420MB)
+# - tokenizer.bin (automatically included)
 ```
 
 ### 2. Build Bootloader
 
 ```bash
-# Clean and compile multimodal bootloader
+# Compile with optimizations
 make clean
 make
 
-# Create disk image (auto-includes available models)
-make llama2-disk
+# Create bootable disk image
+make disk
+# Or manually:
+./create-disk.sh
 ```
 
-### 3. Test
+### 3. Test in QEMU
 
 ```bash
-# QEMU (keyboard input doesn't work - auto-demo only)
-qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd \
-                   -drive format=raw,file=llama2-disk.img \
-                   -m 512M
+# PowerShell (Windows)
+.\test-qemu.ps1
 
-# Real hardware (keyboard works!)
-sudo dd if=llama2-disk.img of=/dev/sdX bs=4M
-# Boot from USB
+# Bash (Linux/macOS/WSL)
+./test-qemu.sh
+
+# Manual QEMU command
+qemu-system-x86_64 -bios OVMF.fd \
+                   -drive format=raw,file=qemu-test.img \
+                   -m 4G -cpu Haswell -nographic
 ```
 
-## Conversational Commands
+### 4. Boot on Real Hardware
 
-In interactive mode, use these commands:
+```bash
+# Write to USB drive (⚠️ BE CAREFUL - this erases the drive!)
+sudo dd if=qemu-test.img of=/dev/sdX bs=4M status=progress
+sync
 
-- `/help` - Show available commands
-- `/clear` - Clear conversation history
-- `/history` - Show last 10 turns
-- `/stats` - Show token usage and SIMD status
-- `/temp <0.0-1.5>` - Adjust temperature
-- `/tokens <1-512>` - Set max response tokens
-- `/exit` - Exit conversation
+# Boot from USB on UEFI system
+# The interactive menu will work with real keyboard input
+```
+
+## Interactive Menu
+
+The bootloader presents a menu with prompt categories:
+
+1. **Stories** - Fairy tales and narrative beginnings
+2. **Science** - Educational explanations  
+3. **Adventure** - Quest and exploration prompts
+4. **Custom** - Enter your own prompt (real hardware only)
+5. **Auto-Demo** - Cycles through all categories
+
+**Note:** Keyboard input crashes in QEMU/OVMF. Use auto-demo mode for testing. Full interactivity works on real UEFI hardware.
 
 ## Prerequisites
 

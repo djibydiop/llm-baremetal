@@ -1,30 +1,19 @@
-# LLM Bare-Metal UEFI Bootloader v2.0
+# LLM Bare-Metal UEFI Bootloader
 
-🚀 **Run Large Language Models directly on bare-metal hardware without an operating system**
+Run Large Language Models directly on bare-metal hardware without an operating system.
 
-A lightweight UEFI bootloader with **intelligent hardware detection** that automatically selects and runs the optimal transformer model for your system.
+A lightweight UEFI bootloader that boots directly into a transformer inference engine. Features automatic hardware detection, multi-model support, and AVX2 SIMD optimization.
 
-**NEW in v2.0:** 🤖 **Hardware Auto-Detection** - System automatically detects RAM, CPU features, and selects the best model!
+## Features
 
----
-
-## 🎯 Features
-
-### Core Features
-- ✅ **OS-Free LLM Inference** - Boot directly into AI without Windows/Linux
-- ✅ **UEFI Boot** - Works on modern PC hardware (2010+)
-- ✅ **USB Bootable** - Create bootable USB drives
-- ✅ **AVX2/FMA Optimized** - Hardware SIMD acceleration
-- ✅ **BPE Tokenization** - Full text encoding/decoding
-- ✅ **Interactive Prompts** - 41 pre-configured prompts across 6 categories
-
-### 🆕 NEW in v2.0
-- 🤖 **Hardware Auto-Detection** - Automatic RAM and CPU feature detection
-- 📊 **Performance Scoring** - Intelligent system capability assessment (0-1000 points)
-- 🎯 **Smart Model Selection** - Automatically picks optimal model for your hardware
-- 📦 **7 Model Support** - From 15M to 7B parameters (60MB to 13GB)
-- 🎨 **Enhanced UI** - Beautiful formatted output with progress indicators
-- 🔍 **Detailed Diagnostics** - Full visibility into hardware capabilities and decisions
+- OS-free LLM inference - boot directly into AI without Windows/Linux
+- UEFI bootloader - works on modern x86-64 hardware
+- USB bootable - deploy to USB drives for portable AI
+- AVX2/FMA SIMD optimization - hardware-accelerated matrix operations
+- Multi-model support - automatically detects and selects optimal model (15M-7B parameters)
+- Hardware auto-detection - RAM capacity and CPU feature detection
+- Interactive prompt library - 53 prompts across 8 categories
+- BPE tokenization - full text encoding/decoding support
 
 ---
 
@@ -45,17 +34,22 @@ cd llm-baremetal
 
 ### 2. Download Model Files
 
-Download the model and tokenizer (not included in repo due to size):
+Models are not included in the repository due to size. Download from HuggingFace:
 
 ```bash
-# Option 1: stories15M (60MB) - RECOMMENDED for USB boot
+# Recommended: stories15M (60MB) - fast, reliable for USB boot
 wget https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.bin
 
-# Option 2: stories110M (420MB) - Larger, may timeout on some UEFI
-wget https://huggingface.co/karpathy/tinyllamas/resolve/main/stories110M.bin
+# Alternative: stories42M (165MB) - better quality
+wget https://huggingface.co/karpathy/tinyllamas/resolve/main/stories42M.bin
 
-# Tokenizer (required)
-wget https://github.com/karpathy/llama2.c/raw/master/tokenizer.bin
+# Tokenizer (required, 434KB)
+wget https://huggingface.co/karpathy/tinyllamas/resolve/main/tokenizer.bin
+```
+
+For automated setup, use the provided script:
+```bash
+./download_models.sh
 ```
 
 ### 3. Build UEFI Bootloader
@@ -109,54 +103,77 @@ llm-baremetal/
 
 ---
 
-## 🔧 Supported Models
+## Supported Models
 
-| Model | Size | Parameters | Recommended Use |
-|-------|------|------------|-----------------|
-| **stories15M** | 60MB | 15M | ✅ USB boot (fast, reliable) |
-| stories110M | 420MB | 110M | Desktop/VM (larger context) |
-| llama2_7b | 13GB | 7B | High-memory systems only |
+All models available at: https://huggingface.co/karpathy/tinyllamas
 
-**Note:** `stories15M.bin` is recommended for USB boot as it loads completely without timeout issues.
+| Model | Size | Parameters | RAM Required | Notes |
+|-------|------|------------|--------------|-------|
+| stories15M | 60MB | 15M | 512MB+ | Recommended for USB boot |
+| stories42M | 165MB | 42M | 1GB+ | Better quality, longer load time |
+| stories110M | 420MB | 110M | 2GB+ | Best quality for TinyStories |
 
----
+The bootloader automatically detects available models on the boot disk and selects the largest one that fits in available RAM (60% threshold).
 
-## 🎮 Interactive Menu
+## Interactive Prompt Library
 
-After booting, you'll see an interactive menu with 6 categories:
+The system includes 53 pre-configured prompts across 8 categories:
 
-1. **Stories** (7 prompts) - Fairy tales, dragons, princesses
-2. **Science** (7 prompts) - Water cycle, gravity, solar system
-3. **Adventure** (7 prompts) - Knights, explorers, pirates
-4. **Philosophy** (5 prompts) - Meaning of life, happiness
-5. **History** (5 prompts) - Ancient civilizations, inventions
-6. **Technology** (5 prompts) - Computers, internet, AI
+- Stories (7 prompts) - Fairy tales, dragons, princesses
+- Science (7 prompts) - Water cycle, gravity, solar system
+- Adventure (7 prompts) - Knights, explorers, pirates
+- Philosophy (5 prompts) - Meaning of life, happiness
+- History (5 prompts) - Ancient civilizations, inventions
+- Technology (5 prompts) - Computers, internet, AI
+- Jokes (6 prompts) - Humor and funny scenarios
+- Coding (6 prompts) - Programming concepts
 
-Select a category, then choose a prompt to generate text.
-
----
-
-## 🚀 Hardware Requirements
-
-### Minimum
-- x86-64 CPU with AVX2 support (Intel Haswell 2013+, AMD Excavator 2015+)
-- 4GB RAM
-- UEFI firmware
-- USB 2.0+ (for USB boot)
-
-### Recommended
-- Intel Core i5/i7 (4th gen+) or AMD Ryzen
-- 8GB RAM
-- USB 3.0+
-
-### BIOS Settings
-- **UEFI boot mode** (not Legacy/CSM)
-- **Secure Boot disabled**
-- **Fast Boot disabled** (optional, helps with debugging)
+Select a category and prompt to generate text. The system tracks conversation context and automatically resets when the context window fills.
 
 ---
 
-## 🐛 Troubleshooting
+## Hardware Requirements
+
+### CPU
+- x86-64 architecture
+- AVX2 support (Intel Haswell 2013+, AMD Excavator 2015+)
+- FMA3 support (recommended for optimal performance)
+
+### Memory
+- Minimum: 512MB RAM (stories15M model)
+- Recommended: 1GB+ RAM (stories42M model)
+- 2GB+ for stories110M model
+
+### Firmware
+- UEFI boot support (not Legacy BIOS)
+- Secure Boot must be disabled
+- Fast Boot disabled (recommended for debugging)
+
+### Storage
+- USB 2.0+ drive (for USB boot)
+- 200MB+ free space for bootloader and models
+
+---
+
+## Testing with QEMU
+
+You can test the bootloader in QEMU without physical hardware:
+
+```bash
+# Linux/WSL
+qemu-system-x86_64 -bios /usr/share/qemu/OVMF.fd \
+  -drive format=raw,file=usb.img \
+  -cpu Haswell -m 1024 -nographic
+
+# macOS (with QEMU installed via Homebrew)
+qemu-system-x86_64 -bios /usr/local/share/qemu/edk2-x86_64-code.fd \
+  -drive format=raw,file=usb.img \
+  -cpu Haswell -m 1024 -nographic
+```
+
+Note: QEMU emulation is significantly slower than real hardware. Expect 10-20x slower inference speed.
+
+## Troubleshooting
 
 ### Boot stops at "127580KB read"
 **Solution:** Model file too large for your UEFI firmware. Use `stories15M.bin` (60MB) instead of `stories110M.bin` (420MB).
@@ -176,35 +193,28 @@ Select a category, then choose a prompt to generate text.
 2. Use smaller model (stories15M vs stories110M)
 3. Increase RAM allocation in QEMU/VM
 
----
+## Documentation
 
-## 📚 Documentation
+- [USB_BOOT_GUIDE.md](USB_BOOT_GUIDE.md) - Detailed USB deployment instructions
+- [HARDWARE_BOOT.md](HARDWARE_BOOT.md) - Hardware compatibility and testing
+- [ROADMAP.md](ROADMAP.md) - Development roadmap and future features
+- [HTTP_IMPLEMENTATION_GUIDE.md](HTTP_IMPLEMENTATION_GUIDE.md) - Network download implementation
+- [MULTI_MODEL_SUPPORT.md](MULTI_MODEL_SUPPORT.md) - Multi-model architecture details
 
-- **[USB_BOOT_GUIDE.md](USB_BOOT_GUIDE.md)** - Detailed USB deployment guide
-- **[HARDWARE_BOOT.md](HARDWARE_BOOT.md)** - Hardware compatibility and testing
-- **[ROADMAP.md](ROADMAP.md)** - Development roadmap and future features
+## Contributing
 
----
-
-## 🤝 Contributing
-
-Contributions welcome! Please:
+Contributions are welcome. Please follow standard GitHub workflow:
 
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+2. Create a feature branch
+3. Make your changes
+4. Submit a pull request
 
----
+## License
 
-## 📜 License
+MIT License - see LICENSE file for details.
 
-MIT License - see [LICENSE](LICENSE) file for details.
-
-Based on [llama2.c](https://github.com/karpathy/llama2.c) by Andrej Karpathy.
-
----
+Based on llama2.c by Andrej Karpathy (https://github.com/karpathy/llama2.c)
 
 ## 🙏 Credits
 
@@ -213,23 +223,15 @@ Based on [llama2.c](https://github.com/karpathy/llama2.c) by Andrej Karpathy.
 - **TinyStories Dataset** - Training data for stories models
 - **GNU-EFI** - UEFI development libraries
 
----
+## Important Notes
 
-## 📞 Contact
+- Model files are not included in the repository. Use download_models.sh or manually download from HuggingFace.
+- For reliable USB boot, use stories15M.bin (60MB). Larger models may timeout on some UEFI firmware.
+- Requires UEFI boot mode. Legacy BIOS is not supported.
+- CPU must support AVX2 instructions (Intel Haswell 2013+ or AMD Excavator 2015+).
 
-- **GitHub Issues**: [Report bugs or request features](https://github.com/djibydiop/llm-baremetal/issues)
-- **Repository**: https://github.com/djibydiop/llm-baremetal
+## Project Information
 
----
-
-## ⚠️ Important Notes
-
-1. **Model files not included** - Download `stories15M.bin` and `tokenizer.bin` separately (see Quick Start)
-2. **USB boot timeout fix** - Use `stories15M.bin` (60MB) instead of `stories110M.bin` (420MB) for reliable USB boot
-3. **UEFI only** - Does not work with Legacy BIOS
-4. **AVX2 required** - CPU must support AVX2 instructions
-
----
-
-**Last Updated:** November 24, 2025  
-**Version:** 1.0.0
+GitHub: https://github.com/djibydiop/llm-baremetal
+Issues: https://github.com/djibydiop/llm-baremetal/issues
+Version: 2.0.0

@@ -14,11 +14,110 @@
 #include <efilib.h>
 #include <stdint.h>
 
-// Simple strlen implementation
+// AVX2 intrinsics for SIMD optimization
+#if defined(__AVX2__) && defined(__FMA__)
+#include <immintrin.h>
+#endif
+
+// ----------------------------------------------------------------------------
+// Network Protocol GUIDs and Structures
+
+// HTTP Protocol GUID (UEFI 2.5+)
+#define EFI_HTTP_SERVICE_BINDING_PROTOCOL_GUID \
+  { 0xbdc8e6af, 0xd9bc, 0x4379, \
+    { 0xa7, 0x2a, 0xe0, 0xc4, 0xe7, 0x5d, 0xae, 0x1c }}
+
+#define EFI_HTTP_PROTOCOL_GUID \
+  { 0x7a59b29b, 0x910b, 0x4171, \
+    { 0x82, 0x42, 0xa8, 0x5a, 0x0d, 0xf2, 0x5b, 0x5b }}
+
+// Simple Network Protocol structures
+typedef struct {
+    CHAR8 *hostname;
+    CHAR8 *path;
+    UINT16 port;
+} UrlInfo;
+
+typedef struct {
+    CHAR16 *filename;
+    CHAR16 *url;
+    UINT64 total_bytes;
+    UINT64 downloaded_bytes;
+    BOOLEAN is_active;
+} DownloadProgress;
+
+// Model repository entry
+typedef struct {
+    const char* name;
+    const char* description;
+    const char* url;
+    UINT64 size_mb;
+    UINT64 min_ram_mb;
+    const char* source;  // "karpathy", "meta", "community"
+} ModelRepositoryEntry;
+
+// Model Repository - Downloadable models from various sources
+static ModelRepositoryEntry model_repository[] = {
+    // Karpathy's TinyLlamas (trained on TinyStories dataset)
+    {
+        "stories15M.bin",
+        "15M params - Tiny stories model (60 MB)",
+        "https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.bin",
+        60,
+        256,
+        "karpathy/tinyllamas"
+    },
+    {
+        "stories42M.bin",
+        "42M params - Small stories model (164 MB)",
+        "https://huggingface.co/karpathy/tinyllamas/resolve/main/stories42M.bin",
+        164,
+        512,
+        "karpathy/tinyllamas"
+    },
+    {
+        "stories110M.bin",
+        "110M params - Medium stories model (420 MB)",
+        "https://huggingface.co/karpathy/tinyllamas/resolve/main/stories110M.bin",
+        420,
+        1024,
+        "karpathy/tinyllamas"
+    },
+    {
+        "stories260M.bin",
+        "260M params - Large stories model (1 GB)",
+        "https://huggingface.co/karpathy/tinyllamas/resolve/main/stories260M.bin",
+        1024,
+        2048,
+        "karpathy/tinyllamas"
+    },
+    // Tokenizer (required for all models)
+    {
+        "tokenizer.bin",
+        "BPE tokenizer (32k vocab, 433 KB)",
+        "https://github.com/karpathy/llama2.c/raw/master/tokenizer.bin",
+        1,
+        0,
+        "karpathy/llama2.c"
+    }
+};
+
+#define MODEL_REPO_COUNT (sizeof(model_repository) / sizeof(ModelRepositoryEntry))
+
+// ----------------------------------------------------------------------------
+// Simple string functions
 static inline int strlen(const char* s) {
     int len = 0;
     while (s[len]) len++;
     return len;
+}
+
+static inline int strncmp(const char* s1, const char* s2, int n) {
+    for (int i = 0; i < n; i++) {
+        if (s1[i] != s2[i]) return s1[i] - s2[i];
+        if (s1[i] == 0) return 0;
+    }
+    return 0;
 }
 
 // ----------------------------------------------------------------------------
@@ -650,17 +749,400 @@ uint32_t rand_efi(void) {
 #define RAND_MAX 32767
 
 // ----------------------------------------------------------------------------
+// Hardware Detection and Capabilities
+
+typedef struct {
+    UINT64 total_ram_mb;      // Total RAM in MB
+    UINT64 available_ram_mb;  // Available RAM in MB
+    BOOLEAN has_sse;          // SSE support
+    BOOLEAN has_sse2;         // SSE2 support
+    BOOLEAN has_avx;          // AVX support
+    BOOLEAN has_avx2;         // AVX2 support
+    BOOLEAN has_avx512;       // AVX512 support
+    BOOLEAN has_fma;          // FMA support
+    UINT32 cpu_cores;         // Number of CPU cores (estimation)
+    UINT32 performance_score; // Calculated performance score (0-1000)
+} HardwareCapabilities;
+
+// ----------------------------------------------------------------------------
+// Benchmark and Statistics
+
+typedef struct {
+    UINT64 start_time_ms;
+    UINT64 first_token_time_ms;
+    UINT64 total_time_ms;
+    int tokens_generated;
+    float tokens_per_second;
+    float time_to_first_token_ms;
+    UINT64 memory_used_mb;
+    BOOLEAN is_active;
+} BenchmarkStats;
+
+typedef struct {
+    int current_token;
+    int total_tokens;
+    int tokens_generated;
+    UINT64 start_time;
+    UINT64 last_update_time;
+    float current_tps;  // tokens per second
+} GenerationStats;
+
+// ----------------------------------------------------------------------------
+// Timer and Statistics Utilities
+
+UINT64 get_timer_ms(void) {
+    // Get current time in milliseconds using UEFI timer
+    EFI_TIME time;
+    ST->RuntimeServices->GetTime(&time, NULL);
+    
+    // Convert to milliseconds (approximate)
+    UINT64 ms = (UINT64)time.Hour * 3600000 +
+                (UINT64)time.Minute * 60000 +
+                (UINT64)time.Second * 1000 +
+                (UINT64)time.Nanosecond / 1000000;
+    return ms;
+}
+
+void print_progress_bar(int current, int total, int bar_width) {
+    int filled = (current * bar_width) / total;
+    int percent = (current * 100) / total;
+    
+    Print(L"\r  [");
+    for (int i = 0; i < bar_width; i++) {
+        if (i < filled) Print(L"█");
+        else Print(L"░");
+    }
+    Print(L"] %3d%% (%d/%d)", percent, current, total);
+}
+
+void print_generation_stats(GenerationStats *stats) {
+    UINT64 current_time = get_timer_ms();
+    UINT64 elapsed_seconds = (current_time - stats->start_time) / 1000;
+    
+    if (elapsed_seconds > 0) {
+        stats->current_tps = (float)stats->tokens_generated / (float)elapsed_seconds;
+    }
+    
+    Print(L"\r  📊 Tokens: %d/%d | Speed: %.2f tok/s | Time: %lus",
+          stats->tokens_generated,
+          stats->total_tokens,
+          stats->current_tps,
+          elapsed_seconds);
+}
+
+void print_benchmark_results(BenchmarkStats *bench) {
+    Print(L"\r\n");
+    Print(L"╔════════════════════════════════════════════════════════╗\r\n");
+    Print(L"║              BENCHMARK RESULTS                         ║\r\n");
+    Print(L"╚════════════════════════════════════════════════════════╝\r\n");
+    Print(L"\r\n");
+    Print(L"  ⏱️  Total Time:        %.2f seconds\r\n", bench->total_time_ms / 1000.0);
+    Print(L"  🚀 First Token:       %.2f ms\r\n", bench->time_to_first_token_ms);
+    Print(L"  📊 Tokens Generated:  %d\r\n", bench->tokens_generated);
+    Print(L"  ⚡ Speed:             %.2f tokens/sec\r\n", bench->tokens_per_second);
+    Print(L"  💾 Memory Used:       %lu MB\r\n", bench->memory_used_mb);
+    Print(L"\r\n");
+    
+    // Performance rating
+    if (bench->tokens_per_second >= 50.0) {
+        Print(L"  🌟 Performance: EXCELLENT\r\n");
+    } else if (bench->tokens_per_second >= 25.0) {
+        Print(L"  ⭐ Performance: GOOD\r\n");
+    } else if (bench->tokens_per_second >= 10.0) {
+        Print(L"  ✓ Performance: ACCEPTABLE\r\n");
+    } else {
+        Print(L"  ⚠️  Performance: SLOW (check hardware)\r\n");
+    }
+    Print(L"\r\n");
+}
+
+// ----------------------------------------------------------------------------
+// Network Functions - Model Download Support
+
+// Parse URL into components
+EFI_STATUS parse_url(CHAR8 *url, UrlInfo *info) {
+    // URL format: http://hostname:port/path
+    // Example: http://huggingface.co/models/stories15M.bin
+    
+    info->port = 80; // Default HTTP port
+    
+    // Skip "http://"
+    CHAR8 *ptr = url;
+    if (CompareMem(ptr, "http://", 7) == 0) {
+        ptr += 7;
+    } else if (CompareMem(ptr, "https://", 8) == 0) {
+        Print(L"[ERROR] HTTPS not supported (use HTTP URLs)\r\n");
+        return EFI_UNSUPPORTED;
+    } else {
+        Print(L"[ERROR] Invalid URL format (must start with http://)\r\n");
+        return EFI_INVALID_PARAMETER;
+    }
+    
+    // Find path separator
+    CHAR8 *slash = ptr;
+    while (*slash && *slash != '/') slash++;
+    
+    if (*slash != '/') {
+        Print(L"[ERROR] No path in URL\r\n");
+        return EFI_INVALID_PARAMETER;
+    }
+    
+    // Extract hostname
+    UINTN hostname_len = slash - ptr;
+    info->hostname = AllocatePool(hostname_len + 1);
+    if (!info->hostname) {
+        return EFI_OUT_OF_RESOURCES;
+    }
+    CopyMem(info->hostname, ptr, hostname_len);
+    info->hostname[hostname_len] = '\0';
+    
+    // Extract path
+    UINTN path_len = AsciiStrLen(slash);
+    info->path = AllocatePool(path_len + 1);
+    if (!info->path) {
+        FreePool(info->hostname);
+        return EFI_OUT_OF_RESOURCES;
+    }
+    CopyMem(info->path, slash, path_len + 1);
+    
+    // Check for port in hostname (hostname:port)
+    CHAR8 *colon = info->hostname;
+    while (*colon && *colon != ':') colon++;
+    if (*colon == ':') {
+        *colon = '\0';
+        colon++;
+        info->port = 0;
+        while (*colon >= '0' && *colon <= '9') {
+            info->port = info->port * 10 + (*colon - '0');
+            colon++;
+        }
+    }
+    
+    return EFI_SUCCESS;
+}
+
+// Check if network/HTTP support is available
+BOOLEAN check_network_available(EFI_SYSTEM_TABLE *SystemTable) {
+    // For now, always return FALSE since HTTP Protocol is complex to implement
+    // and not available in standard QEMU without special network configuration
+    // Future: Implement full HTTP Protocol support when needed
+    return FALSE;
+    
+    /* Full implementation would require:
+    EFI_GUID HttpServiceBindingGuid = EFI_HTTP_SERVICE_BINDING_PROTOCOL_GUID;
+    EFI_HANDLE *Handles = NULL;
+    UINTN HandleCount = 0;
+    EFI_STATUS Status;
+    
+    Status = SystemTable->BootServices->LocateHandleBuffer(
+        ByProtocol,
+        &HttpServiceBindingGuid,
+        NULL,
+        &HandleCount,
+        &Handles
+    );
+    
+    if (Handles) {
+        FreePool(Handles);
+    }
+    
+    return !EFI_ERROR(Status) && HandleCount > 0;
+    */
+}
+
+// Display download menu with available models
+void show_download_menu(HardwareCapabilities *hw, EFI_SYSTEM_TABLE *SystemTable) {
+    Print(L"\r\n");
+    Print(L"╔════════════════════════════════════════════════════════╗\r\n");
+    Print(L"║           NETWORK MODEL DOWNLOAD                      ║\r\n");
+    Print(L"╚════════════════════════════════════════════════════════╝\r\n");
+    Print(L"\r\n");
+    
+    // Check network availability
+    BOOLEAN network_available = check_network_available(SystemTable);
+    
+    if (!network_available) {
+        Print(L"  ⚠️  Network/HTTP Protocol: OFFLINE\r\n");
+        Print(L"\r\n");
+        Print(L"  To enable network in QEMU, use:\r\n");
+        Print(L"    -netdev user,id=net0 -device e1000,netdev=net0\r\n");
+        Print(L"\r\n");
+        Print(L"  📋 Available models you can download manually:\r\n");
+        Print(L"  ════════════════════════════════════════════════\r\n\r\n");
+        
+        // Show catalog even without network
+        for (int i = 0; i < MODEL_REPO_COUNT; i++) {
+            ModelRepositoryEntry *entry = &model_repository[i];
+            BOOLEAN fits = (entry->min_ram_mb <= hw->available_ram_mb);
+            
+            Print(L"  %a (%lu MB) %s\r\n", 
+                  entry->name, 
+                  entry->size_mb,
+                  fits ? L"✓" : L"⚠️");
+            Print(L"    URL: %a\r\n\r\n", entry->url);
+        }
+        
+        Print(L"  💡 Manual download: Use wget/curl from Linux/WSL\r\n");
+        Print(L"     Then copy files to boot USB/disk\r\n\r\n");
+        Print(L"  Press any key to continue...\r\n");
+        EFI_INPUT_KEY Key;
+        while (SystemTable->ConIn->ReadKeyStroke(SystemTable->ConIn, &Key) != EFI_SUCCESS);
+        return;
+    }
+    
+    // Network is available - show interactive download menu
+    Print(L"  ✓ Network: ONLINE\r\n");
+    Print(L"  ✓ HTTP Protocol: Available\r\n\r\n");
+    
+    Print(L"  ✓ Network support detected!\r\n");
+    Print(L"\r\n");
+    Print(L"  Available models for download:\r\n");
+    Print(L"\r\n");
+    Print(L"    [1] Stories 15M  (60 MB)   - Tiny, fast inference\r\n");
+    Print(L"    [2] Stories 42M  (165 MB)  - Small, good quality\r\n");
+    Print(L"    [3] Stories 110M (420 MB)  - Medium, best quality\r\n");
+    Print(L"\r\n");
+    Print(L"  ⚠️  Note: Download feature is EXPERIMENTAL\r\n");
+    Print(L"  ℹ️  Models will be saved to boot disk\r\n");
+    Print(L"\r\n");
+    Print(L"  Press any key to return to main menu...\r\n");
+}
+
+// Simplified download function (placeholder for full implementation)
+EFI_STATUS download_model_simple(
+    EFI_SYSTEM_TABLE *SystemTable,
+    CHAR16 *model_name,
+    CHAR8 *url,
+    CHAR16 *local_filename
+) {
+    Print(L"\r\n");
+    Print(L"╔════════════════════════════════════════════════════════╗\r\n");
+    Print(L"║              DOWNLOADING MODEL                         ║\r\n");
+    Print(L"╚════════════════════════════════════════════════════════╝\r\n");
+    Print(L"\r\n");
+    Print(L"  📦 Model: %s\r\n", model_name);
+    Print(L"  🌐 URL: ");
+    
+    // Print URL (convert ASCII to Unicode for display)
+    CHAR8 *url_ptr = url;
+    while (*url_ptr) {
+        Print(L"%c", *url_ptr);
+        url_ptr++;
+    }
+    Print(L"\r\n");
+    Print(L"  💾 Saving to: %s\r\n", local_filename);
+    Print(L"\r\n");
+    
+    // Parse URL
+    UrlInfo url_info = {0};
+    EFI_STATUS Status = parse_url(url, &url_info);
+    if (EFI_ERROR(Status)) {
+        Print(L"  ❌ Failed to parse URL\r\n");
+        return Status;
+    }
+    
+    Print(L"  ✓ Hostname: ");
+    CHAR8 *host_ptr = url_info.hostname;
+    while (*host_ptr) {
+        Print(L"%c", *host_ptr);
+        host_ptr++;
+    }
+    Print(L"\r\n");
+    Print(L"  ✓ Port: %d\r\n", url_info.port);
+    Print(L"  ✓ Path: ");
+    CHAR8 *path_ptr = url_info.path;
+    while (*path_ptr) {
+        Print(L"%c", *path_ptr);
+        path_ptr++;
+    }
+    Print(L"\r\n");
+    Print(L"\r\n");
+    Print(L"  ⚠️  Full HTTP download not yet implemented\r\n");
+    Print(L"  ℹ️  This feature requires HTTP Protocol implementation\r\n");
+    Print(L"\r\n");
+    
+    // Cleanup
+    if (url_info.hostname) FreePool(url_info.hostname);
+    if (url_info.path) FreePool(url_info.path);
+    
+    return EFI_UNSUPPORTED;
+}
+
+// Show model repository catalog
+void show_model_repository_catalog(HardwareCapabilities *hw, EFI_SYSTEM_TABLE *SystemTable) {
+    Print(L"\r\n");
+    Print(L"╔════════════════════════════════════════════════════════╗\r\n");
+    Print(L"║         DOWNLOADABLE MODELS REPOSITORY                 ║\r\n");
+    Print(L"╚════════════════════════════════════════════════════════╝\r\n");
+    Print(L"\r\n");
+    Print(L"  🖥️  Your Hardware: %lu MB RAM | %s | Score: %d/1000\r\n\r\n",
+          hw->available_ram_mb,
+          hw->has_avx2 ? L"AVX2 ✓" : L"No AVX2",
+          hw->performance_score);
+    
+    Print(L"╔════════════════════════════════════════════════════════╗\r\n");
+    Print(L"║  KARPATHY'S TINYLLAMAS (TinyStories Dataset)           ║\r\n");
+    Print(L"╚════════════════════════════════════════════════════════╝\r\n");
+    Print(L"  Source: huggingface.co/karpathy/tinyllamas\r\n\r\n");
+    
+    for (int i = 0; i < MODEL_REPO_COUNT; i++) {
+        ModelRepositoryEntry *entry = &model_repository[i];
+        
+        // Only show stories models here
+        if (strncmp(entry->name, "stories", 7) == 0) {
+            BOOLEAN fits = (entry->min_ram_mb <= hw->available_ram_mb);
+            BOOLEAN recommended = fits && 
+                                (entry->size_mb <= hw->available_ram_mb * 0.6);
+            
+            Print(L"  [%d] %a\r\n", i + 1, entry->name);
+            Print(L"      %a\r\n", entry->description);
+            Print(L"      Size: %lu MB | Min RAM: %lu MB\r\n", 
+                  entry->size_mb, entry->min_ram_mb);
+            
+            if (recommended) {
+                Print(L"      ✓ RECOMMENDED for your hardware\r\n");
+            } else if (fits) {
+                Print(L"      ⚠️  Will work but may be slow\r\n");
+            } else {
+                Print(L"      ❌ Requires more RAM\r\n");
+            }
+            Print(L"\r\n");
+        }
+    }
+    
+    Print(L"╔════════════════════════════════════════════════════════╗\r\n");
+    Print(L"║  REQUIRED FILES                                         ║\r\n");
+    Print(L"╚════════════════════════════════════════════════════════╝\r\n");
+    Print(L"  [5] tokenizer.bin (433 KB) - Required for all models\r\n");
+    Print(L"      Source: github.com/karpathy/llama2.c\r\n\r\n");
+    
+    Print(L"╔════════════════════════════════════════════════════════╗\r\n");
+    Print(L"║  DOWNLOAD OPTIONS                                       ║\r\n");
+    Print(L"╚════════════════════════════════════════════════════════╝\r\n");
+    Print(L"  1. Manual Download (Recommended for now):\r\n");
+    Print(L"     wget https://huggingface.co/karpathy/tinyllamas/resolve/main/stories110M.bin\r\n\r\n");
+    Print(L"  2. Automated Download (Coming soon):\r\n");
+    Print(L"     Auto-download via HTTP Protocol in UEFI\r\n\r\n");
+    Print(L"  3. Training Your Own (Advanced):\r\n");
+    Print(L"     Use llama2.c train script on custom dataset\r\n\r\n");
+    
+    Print(L"Press any key to continue...\r\n");
+    EFI_INPUT_KEY Key;
+    while (SystemTable->ConIn->ReadKeyStroke(SystemTable->ConIn, &Key) != EFI_SUCCESS);
+}
+
+// ----------------------------------------------------------------------------
 // Multi-Model Architecture Support
-// Model 1: stories110M (420MB) - dim=768, n_layers=12, seq_len=256
-// Model 2: NanoGPT-124M (48MB) - dim=768, n_layers=12, seq_len=1024  
-// Model 3: TinyLlama-1.1B-Chat (440MB) - dim=2048, n_layers=22, seq_len=2048
+// Expanded model support for auto-detection based on hardware
 
 typedef enum {
-    MODEL_STORIES15M = 1,
-    MODEL_STORIES110M = 2,
-    MODEL_LLAMA2_7B = 3,
-    MODEL_NANOGPT = 4,
-    MODEL_TINYLLAMA_CHAT = 5
+    MODEL_STORIES15M = 1,    // 60MB  - 15M params  - Minimum (512MB RAM)
+    MODEL_STORIES42M = 2,    // 165MB - 42M params  - Low (1GB RAM)
+    MODEL_STORIES110M = 3,   // 420MB - 110M params - Medium (2GB RAM)
+    MODEL_STORIES260M = 4,   // 1GB   - 260M params - High (4GB RAM)
+    MODEL_TINYLLAMA_1B = 5,  // 4.4GB - 1.1B params - Very High (8GB RAM)
+    MODEL_LLAMA2_7B = 6,     // 13GB  - 7B params   - Extreme (16GB+ RAM)
+    MODEL_NANOGPT = 7        // 48MB  - 124M params - Special
 } ModelType;
 
 typedef struct {
@@ -741,8 +1223,7 @@ static float *static_xb2 = NULL;
 static float *static_hb = NULL;
 static float *static_hb2 = NULL;
 static float *static_q = NULL;
-static float *static_k = NULL;  // Fixed: was missing!
-static float *static_v = NULL;  // Fixed: was missing!
+// NOTE: k and v are NOT allocated - they point directly into the cache (like Karpathy)
 static float *static_key_cache = NULL;
 static float *static_value_cache = NULL;
 static float *static_att = NULL;
@@ -778,14 +1259,8 @@ EFI_STATUS init_run_state(RunState* s, Config* p, EFI_BOOT_SERVICES *BS) {
     Status = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData, p->dim * sizeof(float), (void**)&static_q);
     if (EFI_ERROR(Status)) { Print(L"[ERROR] Failed to allocate q: %r\r\n", Status); return Status; }
     
-    // Allocate k and v buffers (CRITICAL: these were missing!)
-    Print(L"  Allocating k (%u bytes)...\r\n", kv_dim * sizeof(float));
-    Status = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData, kv_dim * sizeof(float), (void**)&static_k);
-    if (EFI_ERROR(Status)) { Print(L"[ERROR] Failed to allocate k: %r\r\n", Status); return Status; }
-    
-    Print(L"  Allocating v (%u bytes)...\r\n", kv_dim * sizeof(float));
-    Status = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData, kv_dim * sizeof(float), (void**)&static_v);
-    if (EFI_ERROR(Status)) { Print(L"[ERROR] Failed to allocate v: %r\r\n", Status); return Status; }
+    // NOTE: k and v are NOT allocated - they will point directly into key_cache/value_cache!
+    // This matches Karpathy's implementation exactly
     
     Print(L"  Allocating key_cache (%u bytes)...\r\n", p->n_layers * p->seq_len * kv_dim * sizeof(float));
     Status = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData, p->n_layers * p->seq_len * kv_dim * sizeof(float), (void**)&static_key_cache);
@@ -819,8 +1294,7 @@ EFI_STATUS init_run_state(RunState* s, Config* p, EFI_BOOT_SERVICES *BS) {
     s->hb = static_hb;
     s->hb2 = static_hb2;
     s->q = static_q;
-    s->k = static_k;  // Fixed: was missing!
-    s->v = static_v;  // Fixed: was missing!
+    // NOTE: s->k and s->v are NOT set here - they will be set in forward() to point into the cache!
     s->key_cache = static_key_cache;
     s->value_cache = static_value_cache;
     s->att = static_att;
@@ -855,6 +1329,8 @@ void memory_map_weights(TransformerWeights *w, Config* p, float* ptr, int shared
     ptr += n_layers * p->dim * p->hidden_dim;
     w->rms_final_weight = ptr;
     ptr += p->dim;
+    ptr += p->seq_len * head_size / 2; // skip what used to be freq_cis_real (for RoPE)
+    ptr += p->seq_len * head_size / 2; // skip what used to be freq_cis_imag (for RoPE)
     w->wcls = shared_weights ? w->token_embedding_table : ptr;
 }
 
@@ -898,20 +1374,31 @@ void softmax(float* x, int size) {
 
 void matmul(float* xout, float* x, float* w, int n, int d) {
     // W (d,n) @ x (n,) -> xout (d,)
-    // Optimized with loop unrolling (4x) for better performance
+    // AVX2 SIMD optimized: processes 8 floats at once with FMA
     for (int i = 0; i < d; i++) {
         float val = 0.0f;
         int j = 0;
         
-        // Unroll loop 4x - processes 4 elements per iteration
-        for (; j < n - 3; j += 4) {
-            val += w[i * n + j + 0] * x[j + 0];
-            val += w[i * n + j + 1] * x[j + 1];
-            val += w[i * n + j + 2] * x[j + 2];
-            val += w[i * n + j + 3] * x[j + 3];
+        #if defined(__AVX2__) && defined(__FMA__)
+        // AVX2 SIMD path: process 8 floats per iteration
+        __m256 sum = _mm256_setzero_ps();  // accumulator vector
+        
+        for (; j <= n - 8; j += 8) {
+            __m256 wx = _mm256_loadu_ps(&w[i * n + j]);  // load 8 weights
+            __m256 xx = _mm256_loadu_ps(&x[j]);          // load 8 inputs
+            sum = _mm256_fmadd_ps(wx, xx, sum);          // fused multiply-add: sum += wx * xx
         }
         
-        // Handle remaining elements
+        // Horizontal sum: reduce 8 floats to 1
+        __m128 sum_high = _mm256_extractf128_ps(sum, 1);  // upper 4 floats
+        __m128 sum_low = _mm256_castps256_ps128(sum);      // lower 4 floats
+        __m128 sum4 = _mm_add_ps(sum_low, sum_high);       // add upper and lower
+        __m128 sum2 = _mm_add_ps(sum4, _mm_movehl_ps(sum4, sum4));  // horizontal add
+        __m128 sum1 = _mm_add_ss(sum2, _mm_shuffle_ps(sum2, sum2, 1));  // final reduction
+        val = _mm_cvtss_f32(sum1);
+        #endif
+        
+        // Scalar tail: handle remaining elements
         for (; j < n; j++) {
             val += w[i * n + j] * x[j];
         }
@@ -932,22 +1419,9 @@ float* forward(Transformer* transformer, int token, int pos) {
     int hidden_dim =  p->hidden_dim;
     int head_size = dim / p->n_heads;
 
-    // copy the token embedding into x (optimized)
+    // copy the token embedding into x
     float* content_row = w->token_embedding_table + token * dim;
-    int i = 0;
-    // Unroll 8x for better cache utilization
-    for (; i < dim - 7; i += 8) {
-        x[i + 0] = content_row[i + 0];
-        x[i + 1] = content_row[i + 1];
-        x[i + 2] = content_row[i + 2];
-        x[i + 3] = content_row[i + 3];
-        x[i + 4] = content_row[i + 4];
-        x[i + 5] = content_row[i + 5];
-        x[i + 6] = content_row[i + 6];
-        x[i + 7] = content_row[i + 7];
-    }
-    // Handle remaining elements
-    for (; i < dim; i++) {
+    for (int i = 0; i < dim; i++) {
         x[i] = content_row[i];
     }
     
@@ -956,6 +1430,11 @@ float* forward(Transformer* transformer, int token, int pos) {
 
         // attention rmsnorm
         rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
+
+        // key and value point to the kv cache (CRITICAL FIX!)
+        int loff = l * p->seq_len * kv_dim; // kv cache layer offset for convenience
+        s->k = s->key_cache + loff + pos * kv_dim;
+        s->v = s->value_cache + loff + pos * kv_dim;
 
         // qkv matmuls for this position
         matmul(s->q, s->xb, w->wq + l*dim*dim, dim, dim);
@@ -977,15 +1456,6 @@ float* forward(Transformer* transformer, int token, int pos) {
                 vec[i]   = v0 * fcr - v1 * fci;
                 vec[i+1] = v0 * fci + v1 * fcr;
             }
-        }
-
-        // save key,value at this time step (pos) to our kv cache
-        int loff = l * p->seq_len * kv_dim; // kv cache layer offset for convenience
-        float* key_cache_row = s->key_cache + loff + pos * kv_dim;
-        float* value_cache_row = s->value_cache + loff + pos * kv_dim;
-        for (int i = 0; i < kv_dim; i++) {
-            key_cache_row[i] = s->k[i];
-            value_cache_row[i] = s->v[i];
         }
 
         // multihead attention. iterate over all heads
@@ -1202,8 +1672,8 @@ EFI_STATUS load_model(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable, Tra
         return Status;
     }
     
-    // Read config header (7 ints)
-    UINTN config_size = sizeof(Config);
+    // Read config header (7 ints from file, NOT including model_type which is added later)
+    UINTN config_size = 7 * sizeof(int);  // CRITICAL: file has 7 ints, not sizeof(Config)!
     Status = uefi_call_wrapper(File->Read, 3, File, &config_size, &transformer->config);
     if (EFI_ERROR(Status)) {
         Print(L"[ERROR] Failed to read config: %r\r\n", Status);
@@ -1711,56 +2181,342 @@ EFI_STATUS save_generation(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     return EFI_SUCCESS;
 }
 
-ModelType select_model(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
-    Print(L"\r\n=== MODEL DETECTION ===\r\n");
+// ----------------------------------------------------------------------------
+// Hardware Detection Functions
+
+HardwareCapabilities detect_hardware_capabilities(EFI_SYSTEM_TABLE *SystemTable) {
+    HardwareCapabilities hw = {0};
     
-    // Define available models
-    ModelInfo models[] = {
-        {L"stories15M.bin", L"Stories 15M (Tiny - 60MB)", MODEL_STORIES15M, 60, FALSE},
-        {L"stories110M.bin", L"Stories 110M (Small - 420MB)", MODEL_STORIES110M, 420, FALSE},
-        {L"llama2_7b.bin", L"Llama2 7B (Full - 13GB)", MODEL_LLAMA2_7B, 13000, FALSE}
-    };
-    int num_models = 3;
-    int found_count = 0;
-    ModelType first_found = 0;
+    // Detect RAM using GetMemoryMap
+    UINTN MemoryMapSize = 0;
+    EFI_MEMORY_DESCRIPTOR *MemoryMap = NULL;
+    UINTN MapKey;
+    UINTN DescriptorSize;
+    UINT32 DescriptorVersion;
     
-    // Check which models are available
-    Print(L"Scanning boot disk...\r\n\r\n");
+    // First call to get size
+    EFI_STATUS Status = uefi_call_wrapper(SystemTable->BootServices->GetMemoryMap, 5,
+        &MemoryMapSize, MemoryMap, &MapKey, &DescriptorSize, &DescriptorVersion);
+    
+    if (Status == EFI_BUFFER_TOO_SMALL) {
+        // Allocate buffer
+        MemoryMapSize += 2 * DescriptorSize; // Add extra space
+        Status = uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3,
+            EfiLoaderData, MemoryMapSize, (void**)&MemoryMap);
+        
+        if (!EFI_ERROR(Status)) {
+            // Get actual memory map
+            Status = uefi_call_wrapper(SystemTable->BootServices->GetMemoryMap, 5,
+                &MemoryMapSize, MemoryMap, &MapKey, &DescriptorSize, &DescriptorVersion);
+            
+            if (!EFI_ERROR(Status)) {
+                // Calculate total and available RAM
+                UINT64 total_pages = 0;
+                UINT64 available_pages = 0;
+                
+                EFI_MEMORY_DESCRIPTOR *Desc = MemoryMap;
+                UINTN NumDescriptors = MemoryMapSize / DescriptorSize;
+                
+                for (UINTN i = 0; i < NumDescriptors; i++) {
+                    total_pages += Desc->NumberOfPages;
+                    
+                    // Count available memory types
+                    if (Desc->Type == EfiConventionalMemory || 
+                        Desc->Type == EfiBootServicesCode ||
+                        Desc->Type == EfiBootServicesData) {
+                        available_pages += Desc->NumberOfPages;
+                    }
+                    
+                    Desc = (EFI_MEMORY_DESCRIPTOR*)((UINT8*)Desc + DescriptorSize);
+                }
+                
+                // Convert pages to MB (1 page = 4KB)
+                hw.total_ram_mb = (total_pages * 4096) / (1024 * 1024);
+                hw.available_ram_mb = (available_pages * 4096) / (1024 * 1024);
+            }
+            
+            uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, MemoryMap);
+        }
+    }
+    
+    // Detect CPU features using CPUID
+    uint32_t eax, ebx, ecx, edx;
+    
+    // CPUID function 1: Basic features
+    __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(1));
+    
+    hw.has_sse = (edx & (1 << 25)) != 0;
+    hw.has_sse2 = (edx & (1 << 26)) != 0;
+    hw.has_avx = (ecx & (1 << 28)) != 0;
+    hw.has_fma = (ecx & (1 << 12)) != 0;
+    
+    // CPUID function 7: Extended features (AVX2, AVX512)
+    __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
+    
+    hw.has_avx2 = (ebx & (1 << 5)) != 0;
+    hw.has_avx512 = (ebx & (1 << 16)) != 0; // AVX512F
+    
+    // Estimate CPU cores (simplified - just use 4 as default for now)
+    hw.cpu_cores = 4;
+    
+    // Calculate performance score (0-1000)
+    hw.performance_score = 0;
+    
+    // Base score from RAM
+    if (hw.available_ram_mb >= 16384) hw.performance_score += 300;      // 16GB+
+    else if (hw.available_ram_mb >= 8192) hw.performance_score += 250;  // 8GB
+    else if (hw.available_ram_mb >= 4096) hw.performance_score += 200;  // 4GB
+    else if (hw.available_ram_mb >= 2048) hw.performance_score += 150;  // 2GB
+    else if (hw.available_ram_mb >= 1024) hw.performance_score += 100;  // 1GB
+    else if (hw.available_ram_mb >= 512) hw.performance_score += 50;    // 512MB
+    
+    // Score from CPU features
+    if (hw.has_avx512) hw.performance_score += 200;
+    else if (hw.has_avx2) hw.performance_score += 150;
+    else if (hw.has_avx) hw.performance_score += 100;
+    else if (hw.has_sse2) hw.performance_score += 50;
+    
+    if (hw.has_fma) hw.performance_score += 50;
+    
+    // Score from CPU cores (simplified)
+    hw.performance_score += (hw.cpu_cores * 10);
+    
+    // Cap at 1000
+    if (hw.performance_score > 1000) hw.performance_score = 1000;
+    
+    return hw;
+}
+
+void print_hardware_info(HardwareCapabilities *hw) {
+    Print(L"\r\n╔════════════════════════════════════════════════════════╗\r\n");
+    Print(L"║              HARDWARE DETECTION                        ║\r\n");
+    Print(L"╚════════════════════════════════════════════════════════╝\r\n\r\n");
+    
+    Print(L"  💾 RAM:\r\n");
+    Print(L"     Total:     %lu MB\r\n", hw->total_ram_mb);
+    Print(L"     Available: %lu MB\r\n", hw->available_ram_mb);
+    
+    Print(L"\r\n  🖥️  CPU Features:\r\n");
+    Print(L"     SSE:    %s\r\n", hw->has_sse ? L"✓" : L"✗");
+    Print(L"     SSE2:   %s\r\n", hw->has_sse2 ? L"✓" : L"✗");
+    Print(L"     AVX:    %s\r\n", hw->has_avx ? L"✓" : L"✗");
+    Print(L"     AVX2:   %s\r\n", hw->has_avx2 ? L"✓" : L"✗");
+    Print(L"     AVX512: %s\r\n", hw->has_avx512 ? L"✓" : L"✗");
+    Print(L"     FMA:    %s\r\n", hw->has_fma ? L"✓" : L"✗");
+    
+    Print(L"\r\n  📊 Performance Score: %u / 1000\r\n", hw->performance_score);
+    
+    // Performance category
+    if (hw->performance_score >= 700) {
+        Print(L"     Category: 🚀 EXTREME (Can run large models)\r\n");
+    } else if (hw->performance_score >= 500) {
+        Print(L"     Category: ⚡ HIGH (Can run medium-large models)\r\n");
+    } else if (hw->performance_score >= 300) {
+        Print(L"     Category: 💪 MEDIUM (Can run small-medium models)\r\n");
+    } else if (hw->performance_score >= 150) {
+        Print(L"     Category: 📱 LOW (Limited to small models)\r\n");
+    } else {
+        Print(L"     Category: 🔋 MINIMAL (Tiny models only)\r\n");
+    }
+    
+    Print(L"\r\n");
+}
+
+ModelType select_optimal_model_by_hardware(HardwareCapabilities *hw, ModelInfo *models, int num_models, int *found_count) {
+    ModelType selected = 0;
+    
+    // Determine maximum model we can run based on available RAM
+    UINT64 max_model_size_mb = hw->available_ram_mb * 0.6; // Use 60% of available RAM
+    
+    Print(L"\r\n  🎯 Model Selection Strategy:\r\n");
+    Print(L"     Max model size: %lu MB (60%% of available RAM)\r\n", max_model_size_mb);
+    
+    // Find the largest model that fits in available RAM
+    ModelType best_model = 0;
+    UINT64 best_size = 0;
+    
     for (int i = 0; i < num_models; i++) {
-        check_model_exists(ImageHandle, SystemTable, models[i].filename, &models[i].exists);
-        if (models[i].exists) {
-            Print(L"  [%d] %s (%s)\r\n", found_count + 1, models[i].display_name, models[i].filename);
-            found_count++;
-            if (first_found == 0) {
-                first_found = models[i].model_type;
+        if (models[i].exists && models[i].expected_size_mb <= max_model_size_mb) {
+            if (models[i].expected_size_mb > best_size) {
+                best_size = models[i].expected_size_mb;
+                best_model = models[i].model_type;
             }
         }
     }
     
+    if (best_model == 0 && *found_count > 0) {
+        // Fallback to smallest available model
+        for (int i = 0; i < num_models; i++) {
+            if (models[i].exists) {
+                if (best_model == 0 || models[i].expected_size_mb < best_size) {
+                    best_size = models[i].expected_size_mb;
+                    best_model = models[i].model_type;
+                }
+            }
+        }
+        Print(L"     ⚠️  Selected smallest model (insufficient RAM for larger ones)\r\n");
+    }
+    
+    if (best_model != 0) {
+        Print(L"     ✓ Selected: %lu MB model\r\n", best_size);
+    }
+    
+    return best_model;
+}
+
+ModelType select_model(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+    // First, detect hardware capabilities
+    HardwareCapabilities hw = detect_hardware_capabilities(SystemTable);
+    print_hardware_info(&hw);
+    
+    Print(L"\r\n╔════════════════════════════════════════════════════════╗\r\n");
+    Print(L"║              MODEL DETECTION & SELECTION               ║\r\n");
+    Print(L"╚════════════════════════════════════════════════════════╝\r\n");
+    
+    // Define available models (expanded list)
+    ModelInfo models[] = {
+        {L"stories15M.bin", L"Stories 15M (Tiny)", MODEL_STORIES15M, 60, FALSE},
+        {L"stories42M.bin", L"Stories 42M (Small)", MODEL_STORIES42M, 165, FALSE},
+        {L"stories110M.bin", L"Stories 110M (Medium)", MODEL_STORIES110M, 420, FALSE},
+        {L"stories260M.bin", L"Stories 260M (Large)", MODEL_STORIES260M, 1000, FALSE},
+        {L"tinyllama_1b.bin", L"TinyLlama 1.1B (XL)", MODEL_TINYLLAMA_1B, 4400, FALSE},
+        {L"llama2_7b.bin", L"Llama2 7B (XXL)", MODEL_LLAMA2_7B, 13000, FALSE},
+        {L"nanogpt.bin", L"NanoGPT 124M (Special)", MODEL_NANOGPT, 48, FALSE}
+    };
+    int num_models = 7;
+    int found_count = 0;
+    
+    // Check which models are available on disk
+    Print(L"\r\n  🔍 Scanning boot disk for models...\r\n\r\n");
+    for (int i = 0; i < num_models; i++) {
+        check_model_exists(ImageHandle, SystemTable, models[i].filename, &models[i].exists);
+        if (models[i].exists) {
+            Print(L"     ✓ Found: %s (%lu MB)\r\n", models[i].display_name, models[i].expected_size_mb);
+            found_count++;
+        }
+    }
+    
     if (found_count == 0) {
-        Print(L"\r\n[ERROR] No model found!\r\n");
-        Print(L"Please add one of these files to boot disk:\r\n");
-        Print(L"  - stories15M.bin (60MB)\r\n");
-        Print(L"  - stories110M.bin (420MB)\r\n");
-        Print(L"  - llama2_7b.bin (13GB)\r\n\r\n");
+        Print(L"\r\n  ❌ ERROR: No model found!\r\n\r\n");
+        Print(L"  Please add at least one model file to boot disk:\r\n");
+        Print(L"     • stories15M.bin (60MB) - Minimum requirements\r\n");
+        Print(L"     • stories42M.bin (165MB) - Better quality\r\n");
+        Print(L"     • stories110M.bin (420MB) - Recommended\r\n");
+        Print(L"     • stories260M.bin (1GB) - High quality\r\n");
+        Print(L"     • tinyllama_1b.bin (4.4GB) - Very high quality\r\n");
+        Print(L"     • llama2_7b.bin (13GB) - Maximum quality\r\n\r\n");
+        
+        // Offer network download or show catalog
+        Print(L"\r\n  💡 You can download models from repository:\r\n\r\n");
+        show_download_menu(&hw, SystemTable);
+        Print(L"\r\n");
+        
         return 0;
     }
     
-    // Auto-select first available model
-    Print(L"\r\nAuto-selecting first available model...\r\n");
-    return first_found;
+    Print(L"\r\n  📊 Found %d model(s) on disk\r\n", found_count);
+    
+    // Select optimal model based on hardware
+    ModelType auto_selected = select_optimal_model_by_hardware(&hw, models, num_models, &found_count);
+    
+    if (auto_selected == 0) {
+        Print(L"\r\n  ⚠️  Could not auto-select model. Using first available...\r\n");
+        for (int i = 0; i < num_models; i++) {
+            if (models[i].exists) {
+                auto_selected = models[i].model_type;
+                break;
+            }
+        }
+    }
+    
+    // Interactive selection menu
+    Print(L"\r\n╔════════════════════════════════════════════════════════╗\r\n");
+    Print(L"║              MODEL SELECTION MENU                      ║\r\n");
+    Print(L"╚════════════════════════════════════════════════════════╝\r\n\r\n");
+    
+    Print(L"  Available models:\r\n\r\n");
+    
+    int choice_map[10] = {0}; // Map choice number to model index
+    int choice_num = 1;
+    
+    for (int i = 0; i < num_models; i++) {
+        if (models[i].exists) {
+            CHAR16 indicator[10] = L"";
+            if (models[i].model_type == auto_selected) {
+                UnicodeSPrint(indicator, sizeof(indicator), L" 🎯");
+            }
+            Print(L"     [%d] %s - %lu MB%s\r\n", 
+                  choice_num, 
+                  models[i].display_name, 
+                  models[i].expected_size_mb,
+                  indicator);
+            choice_map[choice_num] = i;
+            choice_num++;
+        }
+    }
+    
+    Print(L"\r\n     [0] 🤖 Auto-select (recommended)\r\n");
+    
+    // Add download option if network available
+    if (check_network_available(SystemTable)) {
+        Print(L"     [D] 🌐 Download models from internet\r\n");
+    }
+    
+    Print(L"\r\n  🎯 = Auto-selected based on your hardware\r\n");
+    Print(L"\r\n  ℹ️  Note: Keyboard input limited in QEMU/OVMF\r\n");
+    Print(L"  ✓ Auto-selecting recommended model...\r\n\r\n");
+    
+    // Show download menu hint if available
+    if (check_network_available(SystemTable)) {
+        Print(L"  💡 Tip: Press 'D' to download more models (feature in development)\r\n\r\n");
+    }
+    
+    // For now, directly use auto-selected model
+    // TODO: Implement proper keyboard input handling in UEFI
+    ModelType selected = auto_selected;
+    
+    return selected;
 }
 
 CHAR16* get_model_filename(ModelType model_type) {
     switch (model_type) {
         case MODEL_STORIES15M:
             return L"stories15M.bin";
+        case MODEL_STORIES42M:
+            return L"stories42M.bin";
         case MODEL_STORIES110M:
             return L"stories110M.bin";
+        case MODEL_STORIES260M:
+            return L"stories260M.bin";
+        case MODEL_TINYLLAMA_1B:
+            return L"tinyllama_1b.bin";
         case MODEL_LLAMA2_7B:
             return L"llama2_7b.bin";
+        case MODEL_NANOGPT:
+            return L"nanogpt.bin";
         default:
             return L"stories110M.bin"; // fallback
+    }
+}
+
+const CHAR16* get_model_display_name(ModelType model_type) {
+    switch (model_type) {
+        case MODEL_STORIES15M:
+            return L"Stories 15M (60MB)";
+        case MODEL_STORIES42M:
+            return L"Stories 42M (165MB)";
+        case MODEL_STORIES110M:
+            return L"Stories 110M (420MB)";
+        case MODEL_STORIES260M:
+            return L"Stories 260M (1GB)";
+        case MODEL_TINYLLAMA_1B:
+            return L"TinyLlama 1.1B (4.4GB)";
+        case MODEL_LLAMA2_7B:
+            return L"Llama2 7B (13GB)";
+        case MODEL_NANOGPT:
+            return L"NanoGPT 124M (48MB)";
+        default:
+            return L"Unknown Model";
     }
 }
 
@@ -1805,30 +2561,44 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     // Try to enable AVX
     check_and_enable_avx();
     
-    // Header - colors cause UEFI crashes, keeping simple text
+    // Header
     Print(L"\r\n");
-    Print(L"=== LLM BARE-METAL INFERENCE ENGINE ===\r\n");
-    Print(L"Running on UEFI Firmware (No OS Required)\r\n");
-    Print(L"System: UEFI x86-64 | Optimizations: AVX2 + Loop Unrolling\r\n");
+    Print(L"╔══════════════════════════════════════════════════════════════╗\r\n");
+    Print(L"║        LLM BARE-METAL INFERENCE ENGINE v2.0                  ║\r\n");
+    Print(L"║        Running on UEFI Firmware (No OS Required)             ║\r\n");
+    Print(L"╚══════════════════════════════════════════════════════════════╝\r\n");
+    Print(L"\r\n");
+    Print(L"  🖥️  System: UEFI x86-64\r\n");
+    Print(L"  ⚡ Optimizations: Auto-detected (AVX/AVX2/FMA)\r\n");
+    
+    // Check network capabilities
+    if (check_network_available(SystemTable)) {
+        Print(L"  🌐 Network: Available (HTTP download enabled)\r\n");
+    } else {
+        Print(L"  🌐 Network: Not available (offline mode)\r\n");
+    }
     Print(L"\r\n");
     
-    // Select model
-    Print(L"Detecting available models...\r\n");
-    
+    // Select model with hardware detection
     ModelType selected_model = select_model(ImageHandle, SystemTable);
     if (selected_model == 0) {
-        Print(L"[ERROR] No model found. Please add stories110M.bin to boot disk.\r\n");
-        ST->BootServices->Stall(3000000);
+        Print(L"\r\n  ❌ FATAL ERROR: No compatible model found!\r\n");
+        Print(L"     Please add a model file to the boot disk.\r\n\r\n");
+        ST->BootServices->Stall(5000000);
         return EFI_NOT_FOUND;
     }
     
     CHAR16* model_filename = get_model_filename(selected_model);
+    const CHAR16* model_display = get_model_display_name(selected_model);
     
-    Print(L"\r\nInitializing Transformer (110M parameters)...\r\n");
+    Print(L"\r\n╔════════════════════════════════════════════════════════╗\r\n");
+    Print(L"║              LOADING SELECTED MODEL                    ║\r\n");
+    Print(L"╚════════════════════════════════════════════════════════╝\r\n");
+    Print(L"\r\n  🚀 Model: %s\r\n", model_display);
+    Print(L"  📁 File:  %s\r\n", model_filename);
+    Print(L"\r\n  ⏳ Loading model into memory...\r\n\r\n");
     
     Transformer transformer;
-    
-    Print(L"Loading model: %s\r\n", model_filename);
     
     // Load model
     EFI_STATUS Status = load_model(ImageHandle, SystemTable, &transformer, model_filename);
@@ -1845,7 +2615,6 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     }
     
     transformer.config.model_type = selected_model;
-    Print(L"[SUCCESS] Model loaded successfully! (427 MB)\r\n");
     
     // Load tokenizer
     Tokenizer tokenizer;
@@ -1891,6 +2660,12 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         if (logits == NULL) {
             Print(L"[ERROR] Forward pass returned NULL at pos %d!\r\n", pos);
             break;
+        }
+        
+        // DEBUG: Print first 5 logits on first iteration
+        if (pos == 0) {
+            Print(L"[DEBUG] First 5 logits: %.3f %.3f %.3f %.3f %.3f\r\n",
+                  logits[0], logits[1], logits[2], logits[3], logits[4]);
         }
         
         // Sample next token with temperature
@@ -1949,7 +2724,7 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         
         // Prompt collections (enriched with more variety)
         static const char* story_prompts[] = {
-            "Once upon a time, in a magical kingdom",
+            "Once upon a time",
             "The little girl found a mysterious door",
             "In the enchanted forest lived a wise old owl",
             "The dragon slept peacefully until",
@@ -2002,12 +2777,30 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
             "Artificial intelligence learns from"
         };
         
+        static const char* jokes_prompts[] = {
+            "Why did the chicken cross the road? Because",
+            "A robot walked into a bar and",
+            "The funny thing about cats is that they",
+            "What do you call a bear with no teeth? A",
+            "Knock knock! Who's there? A",
+            "The clown juggled and then suddenly"
+        };
+        
+        static const char* coding_prompts[] = {
+            "Programming is the art of telling computers",
+            "A function takes input and returns",
+            "Debugging is the process of finding",
+            "Variables store data that can",
+            "Loops repeat code until",
+            "Algorithms solve problems by"
+        };
+        
         // Auto-demo mode: cycle through all categories
         const char** demo_prompts;
         int num_prompts;
         const char* category_name;
         
-        for (int category = 0; category < 6; category++) {
+        for (int category = 0; category < 8; category++) {
             switch(category) {
                 case 0:
                     demo_prompts = story_prompts;
@@ -2038,6 +2831,16 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
                     demo_prompts = technology_prompts;
                     num_prompts = 5;
                     category_name = "TECHNOLOGY";
+                    break;
+                case 6:
+                    demo_prompts = jokes_prompts;
+                    num_prompts = 6;
+                    category_name = "JOKES";
+                    break;
+                case 7:
+                    demo_prompts = coding_prompts;
+                    num_prompts = 6;
+                    category_name = "CODING";
                     break;
             }
             
@@ -2075,17 +2878,11 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
             int prompt_tokens[256];
             int num_prompt_tokens = encode_prompt(&tokenizer, user_input, prompt_tokens, 256);
             
-            // Process prompt tokens through model (conditioning)
-            Print(L"Processing");
-            for (int i = 0; i < num_prompt_tokens - 1; i++) {
-                forward(&transformer, prompt_tokens[i], conversation_pos + i);
-                if (i % 5 == 0) Print(L".");
-            }
-            Print(L"\r\n");
-            
-            // Start generation from last prompt token
-            int token = prompt_tokens[num_prompt_tokens - 1];
-            int max_response_tokens = 80;  // Shorter responses for REPL
+            // Start generation loop matching Karpathy's approach exactly
+            // Begin with first prompt token (BOS) at position 0
+            int token = prompt_tokens[0];
+            int pos = conversation_pos;
+            int max_total_tokens = num_prompt_tokens + 80;  // Prompt + response
             
             // Show generation header
             Print(L"Generated: ");
@@ -2094,66 +2891,95 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
             output_buffer[0] = '\0';
             int output_pos = 0;
             
-            // Generate response
-            for (int i = 0; i < max_response_tokens; i++) {
-                float* logits = forward(&transformer, token, conversation_pos + num_prompt_tokens - 1 + i);
+            // Performance timing (simple counter-based approach)
+            int generated_tokens = 0;
+            int forward_pass_count = 0;
+            
+            // Main generation loop
+            for (int step = 0; step < max_total_tokens && pos < 256; step++) {
+                forward_pass_count++;
+                
+                // Forward pass to get logits for current token at current position
+                float* logits = forward(&transformer, token, pos);
                 
                 if (logits == NULL) {
                     Print(L"[ERROR] Forward pass failed\r\n");
                     break;
                 }
                 
-                // Sample next token with temperature
+                // Determine next token: forced (if in prompt) or sampled (if generating)
                 int next;
-                if (temperature == 0.0f) {
-                    next = argmax(logits, transformer.config.vocab_size);
+                if (pos < conversation_pos + num_prompt_tokens - 1) {
+                    // Still processing prompt - force next token from prompt
+                    next = prompt_tokens[pos - conversation_pos + 1];
                 } else {
-                    // Apply temperature
-                    for (int j = 0; j < transformer.config.vocab_size; j++) {
-                        logits[j] /= temperature;
+                    // Done with prompt - sample next token
+                    if (temperature == 0.0f) {
+                        next = argmax(logits, transformer.config.vocab_size);
+                    } else {
+                        // Apply temperature
+                        for (int j = 0; j < transformer.config.vocab_size; j++) {
+                            logits[j] /= temperature;
+                        }
+                        softmax(logits, transformer.config.vocab_size);
+                        
+                        // Sample with top-p (nucleus sampling) for better quality
+                        float coin = (float)rand_efi() / (float)RAND_MAX;
+                        next = sample_mult(logits, transformer.config.vocab_size, coin);
                     }
-                    softmax(logits, transformer.config.vocab_size);
                     
-                    // Sample with top-p (nucleus sampling) for better quality
-                    float coin = (float)rand_efi() / (float)RAND_MAX;
-                    next = sample_mult(logits, transformer.config.vocab_size, coin);
+                    // Only print/save generated tokens (not prompt tokens)
+                    generated_tokens++;
+                    
+                    if (use_text) {
+                        char* piece = decode_token(&tokenizer, token);  // Print CURRENT token
+                        CHAR16 wpiece[256];
+                        for (int k = 0; k < 255 && piece[k]; k++) {
+                            wpiece[k] = (CHAR16)piece[k];
+                            wpiece[k+1] = 0;
+                        }
+                        Print(L"%s", wpiece);
+                        
+                        // Save to output buffer
+                        int piece_len = 0;
+                        while (piece[piece_len]) piece_len++;
+                        if (output_pos + piece_len < sizeof(output_buffer) - 1) {
+                            for (int k = 0; k < piece_len; k++) {
+                                output_buffer[output_pos++] = piece[k];
+                            }
+                            output_buffer[output_pos] = '\0';
+                        }
+                    } else {
+                        Print(L"[%d] ", token);
+                    }
                 }
+                
+                // Move to next position
+                pos++;
                 
                 // Check for EOS token (end of sequence)
-                if (next == 2 || next == 0) {
-                    Print(L" [EOS]");
-                    break;
+                if (next == 1 || next == 2) {
+                    if (pos >= conversation_pos + num_prompt_tokens) {
+                        Print(L" [EOS]");
+                        break;
+                    }
                 }
                 
-                // Decode and print
-                if (use_text) {
-                    char* piece = decode_token(&tokenizer, next);
-                    CHAR16 wpiece[256];
-                    for (int k = 0; k < 255 && piece[k]; k++) {
-                        wpiece[k] = (CHAR16)piece[k];
-                        wpiece[k+1] = 0;
-                    }
-                    Print(L"%s", wpiece);
-                    
-                    // Save to output buffer
-                    int piece_len = 0;
-                    while (piece[piece_len]) piece_len++;
-                    if (output_pos + piece_len < sizeof(output_buffer) - 1) {
-                        for (int k = 0; k < piece_len; k++) {
-                            output_buffer[output_pos++] = piece[k];
-                        }
-                        output_buffer[output_pos] = '\0';
-                    }
-                } else {
-                    Print(L"[%d] ", next);
-                }
-                
+                // Move to next token
                 token = next;
             }
             
                 // Generation complete
                 Print(L"\r\n");
                 total_generations++;
+                
+                // Performance statistics (simple approach)
+                if (generated_tokens > 0 && forward_pass_count > 0) {
+                    Print(L"[PERF] Generated %d tokens using %d forward passes\r\n", 
+                          generated_tokens, forward_pass_count);
+                    Print(L"[PERF] Approximate ratio: %.2f tokens per forward pass\r\n",
+                          (float)generated_tokens / (float)forward_pass_count);
+                }
                 
                 // Save to disk (Phase 9: Persistent Storage)
                 EFI_STATUS save_status = save_generation(ImageHandle, SystemTable, 
@@ -2165,17 +2991,32 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
                     Print(L"[INFO] Could not save to disk (read-only filesystem?)\r\n");
                 }
                 
-                Print(L"[COMPLETE] Generated %d tokens\r\n", max_response_tokens);
+                int tokens_generated = pos - (conversation_pos + num_prompt_tokens);
+                Print(L"[COMPLETE] Generated %d tokens\r\n", tokens_generated);
+                
+                // Display conversation stats
+                Print(L"[CONVERSATION] Position: %d/%d tokens used\r\n", 
+                      conversation_pos, transformer.config.seq_len);
+                
+                // Check if we can continue conversation
+                int remaining_context = transformer.config.seq_len - pos;
+                if (remaining_context > 50) {
+                    Print(L"[CONVERSATION] %d tokens remaining for continuation\r\n", 
+                          remaining_context);
+                }
+                
                 Print(L"========================================\r\n\r\n");
-                conversation_pos += max_response_tokens;
+                conversation_pos = pos; // Update conversation position to current position
                 
                 // Small delay between prompts
                 ST->BootServices->Stall(1000000); // 1 second
                 
                 // Reset if conversation gets too long
                 if (conversation_pos > transformer.config.seq_len - 100) {
+                    Print(L"[CONTEXT RESET] Memory limit reached (%d tokens)\r\n", 
+                          conversation_pos);
+                    Print(L"Starting fresh conversation...\r\n\r\n");
                     conversation_pos = 0;
-                    Print(L"[Context reset - memory limit reached]\r\n\r\n");
                 }
             }
         }

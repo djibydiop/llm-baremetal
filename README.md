@@ -1,20 +1,30 @@
-# LLM Bare-Metal UEFI Bootloader
+# LLM Bare-Metal UEFI Bootloader v2.0
 
 🚀 **Run Large Language Models directly on bare-metal hardware without an operating system**
 
-A lightweight UEFI bootloader that loads and runs transformer models (LLaMA2, TinyLlama) with optimized inference on x86-64 hardware.
+A lightweight UEFI bootloader with **intelligent hardware detection** that automatically selects and runs the optimal transformer model for your system.
+
+**NEW in v2.0:** 🤖 **Hardware Auto-Detection** - System automatically detects RAM, CPU features, and selects the best model!
 
 ---
 
 ## 🎯 Features
 
+### Core Features
 - ✅ **OS-Free LLM Inference** - Boot directly into AI without Windows/Linux
 - ✅ **UEFI Boot** - Works on modern PC hardware (2010+)
 - ✅ **USB Bootable** - Create bootable USB drives
 - ✅ **AVX2/FMA Optimized** - Hardware SIMD acceleration
-- ✅ **Multiple Models** - Support for 15M to 110M parameter models
-- ✅ **Interactive Prompts** - 41 pre-configured prompts across 6 categories
 - ✅ **BPE Tokenization** - Full text encoding/decoding
+- ✅ **Interactive Prompts** - 41 pre-configured prompts across 6 categories
+
+### 🆕 NEW in v2.0
+- 🤖 **Hardware Auto-Detection** - Automatic RAM and CPU feature detection
+- 📊 **Performance Scoring** - Intelligent system capability assessment (0-1000 points)
+- 🎯 **Smart Model Selection** - Automatically picks optimal model for your hardware
+- 📦 **7 Model Support** - From 15M to 7B parameters (60MB to 13GB)
+- 🎨 **Enhanced UI** - Beautiful formatted output with progress indicators
+- 🔍 **Detailed Diagnostics** - Full visibility into hardware capabilities and decisions
 
 ---
 

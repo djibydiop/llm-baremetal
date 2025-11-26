@@ -62,21 +62,31 @@ make clean && make
 This produces:
 - `llama2.efi` - UEFI bootloader with LLM inference
 
-### 4. Deploy to USB (Windows)
-
-```powershell
-# Format USB as FAT32 (drive letter E: in this example)
-# Then run deployment script:
-.\deploy-usb.ps1 -DriveLetter E
-```
-
-### 5. Deploy to USB (Linux)
+### 4. Create Bootable USB Image
 
 ```bash
-sudo ./deploy-usb.sh /dev/sdX  # Replace sdX with your USB device
+# Create 512MB disk image
+dd if=/dev/zero of=usb.img bs=1M count=512
+mkfs.vfat usb.img
+
+# Create EFI boot structure
+mmd -i usb.img ::/EFI
+mmd -i usb.img ::/EFI/BOOT
+
+# Copy bootloader and models
+mcopy -i usb.img llama2.efi ::/EFI/BOOT/BOOTX64.EFI
+mcopy -i usb.img stories15M.bin ::/
+mcopy -i usb.img tokenizer.bin ::/
 ```
 
-See `USB_BOOT_GUIDE.md` for detailed USB deployment instructions.
+### 5. Write to USB Drive
+
+```bash
+# Linux: Write image to USB drive (replace sdX with your device)
+sudo dd if=usb.img of=/dev/sdX bs=4M status=progress && sync
+
+# Windows: Use Rufus or similar tool to write usb.img to USB drive
+```
 
 ---
 

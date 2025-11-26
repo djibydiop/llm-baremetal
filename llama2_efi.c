@@ -2891,9 +2891,16 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
             output_buffer[0] = '\0';
             int output_pos = 0;
             
-            // Performance timing (simple counter-based approach)
+            // Performance timing with EFI GetTime
             int generated_tokens = 0;
             int forward_pass_count = 0;
+            EFI_TIME start_time, end_time, first_token_time;
+            SystemTable->RuntimeServices->GetTime(&start_time, NULL);
+            UINT64 start_ms = (UINT64)start_time.Hour * 3600000 + 
+                              (UINT64)start_time.Minute * 60000 + 
+                              (UINT64)start_time.Second * 1000;
+            UINT64 first_token_ms = 0;
+            int first_token_captured = 0;
             
             // Main generation loop
             for (int step = 0; step < max_total_tokens && pos < 256; step++) {
@@ -2932,6 +2939,15 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
                     generated_tokens++;
                     
                     if (use_text) {
+                        // Capture first token latency
+                        if (!first_token_captured) {
+                            SystemTable->RuntimeServices->GetTime(&first_token_time, NULL);
+                            first_token_ms = (UINT64)first_token_time.Hour * 3600000 + 
+                                            (UINT64)first_token_time.Minute * 60000 + 
+                                            (UINT64)first_token_time.Second * 1000;
+                            first_token_captured = 1;
+                        }
+                        
                         char* piece = decode_token(&tokenizer, token);  // Print CURRENT token
                         CHAR16 wpiece[256];
                         for (int k = 0; k < 255 && piece[k]; k++) {
@@ -2973,11 +2989,32 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
                 Print(L"\r\n");
                 total_generations++;
                 
-                // Performance statistics (simple approach)
-                if (generated_tokens > 0 && forward_pass_count > 0) {
-                    Print(L"[PERF] Generated %d tokens using %d forward passes\r\n", 
-                          generated_tokens, forward_pass_count);
-                    Print(L"[PERF] Approximate ratio: %.2f tokens per forward pass\r\n",
+                // Calculate elapsed time
+                SystemTable->RuntimeServices->GetTime(&end_time, NULL);
+                UINT64 end_ms = (UINT64)end_time.Hour * 3600000 + 
+                                (UINT64)end_time.Minute * 60000 + 
+                                (UINT64)end_time.Second * 1000;
+                UINT64 elapsed_ms = end_ms - start_ms;
+                
+                // Performance statistics with precise timing
+                if (generated_tokens > 0 && forward_pass_count > 0 && elapsed_ms > 0) {
+                    float elapsed_sec = (float)elapsed_ms / 1000.0f;
+                    float tokens_per_sec = (float)generated_tokens / elapsed_sec;
+                    
+                    Print(L"[PERF] Generated %d tokens in %d.%03d seconds\r\n", 
+                          generated_tokens, 
+                          (int)(elapsed_ms / 1000), 
+                          (int)(elapsed_ms % 1000));
+                    Print(L"[PERF] Speed: %.2f tokens/second\r\n", tokens_per_sec);
+                    
+                    // First token latency
+                    if (first_token_captured) {
+                        UINT64 first_token_latency = first_token_ms - start_ms;
+                        Print(L"[PERF] First token latency: %d ms\r\n", (int)first_token_latency);
+                    }
+                    
+                    Print(L"[PERF] Forward passes: %d (ratio: %.2f)\r\n",
+                          forward_pass_count,
                           (float)generated_tokens / (float)forward_pass_count);
                 }
                 

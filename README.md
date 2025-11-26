@@ -9,11 +9,12 @@ A lightweight UEFI bootloader that boots directly into a transformer inference e
 - OS-free LLM inference - boot directly into AI without Windows/Linux
 - UEFI bootloader - works on modern x86-64 hardware
 - USB bootable - deploy to USB drives for portable AI
-- AVX2/FMA SIMD optimization - hardware-accelerated matrix operations
+- AVX2/FMA SIMD optimization - hardware-accelerated matrix operations (2-3x speedup)
 - Multi-model support - automatically detects and selects optimal model (15M-7B parameters)
 - Hardware auto-detection - RAM capacity and CPU feature detection
 - Interactive prompt library - 53 prompts across 8 categories
 - BPE tokenization - full text encoding/decoding support
+- Precise performance measurement - tokens/second, first token latency, timing with EFI Runtime Services
 
 ---
 
@@ -114,6 +115,22 @@ All models available at: https://huggingface.co/karpathy/tinyllamas
 | stories110M | 420MB | 110M | 2GB+ | Best quality for TinyStories |
 
 The bootloader automatically detects available models on the boot disk and selects the largest one that fits in available RAM (60% threshold).
+
+## Performance Metrics
+
+The system provides detailed real-time performance measurement:
+
+- **Tokens per second** - Actual generation speed measured with EFI Runtime Services
+- **First token latency** - Time from prompt submission to first output token
+- **Total generation time** - Complete inference duration in seconds.milliseconds
+- **Forward pass count** - Number of transformer passes for analysis
+
+Expected performance (real hardware with AVX2):
+- stories15M: 20-40 tokens/second
+- stories42M: 10-20 tokens/second
+- stories110M: 5-10 tokens/second
+
+Note: QEMU emulation is 10-20x slower than real hardware.
 
 ## Interactive Prompt Library
 

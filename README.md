@@ -6,15 +6,16 @@ A lightweight UEFI bootloader that boots directly into a transformer inference e
 
 ## Features
 
-- OS-free LLM inference - boot directly into AI without Windows/Linux
-- UEFI bootloader - works on modern x86-64 hardware
-- USB bootable - deploy to USB drives for portable AI
-- AVX2/FMA SIMD optimization - hardware-accelerated matrix operations (2-3x speedup)
-- Multi-model support - automatically detects and selects optimal model (15M-7B parameters)
-- Hardware auto-detection - RAM capacity and CPU feature detection
-- Interactive prompt library - 53 prompts across 8 categories
-- BPE tokenization - full text encoding/decoding support
-- Precise performance measurement - tokens/second, first token latency, timing with EFI Runtime Services
+- **Interactive Chat REPL** - Real-time conversations with keyboard input, commands (/help, /reset, /temp, /tokens)
+- **OS-free LLM inference** - Boot directly into AI without Windows/Linux
+- **UEFI bootloader** - Works on modern x86-64 hardware
+- **USB bootable** - Deploy to USB drives for portable AI
+- **AVX2/FMA SIMD optimization** - Hardware-accelerated matrix operations (2-3x speedup)
+- **Multi-model support** - Automatically detects and selects optimal model (15M-260M parameters)
+- **Hardware auto-detection** - RAM capacity and CPU feature detection
+- **Conversation context management** - Maintains full chat history with token tracking
+- **BPE tokenization** - Full text encoding/decoding support
+- **Precise performance measurement** - Tokens/second, first token latency, timing with EFI Runtime Services
 
 ---
 
@@ -142,9 +143,42 @@ Expected performance (real hardware with AVX2):
 
 Note: QEMU emulation is 10-20x slower than real hardware.
 
-## Interactive Prompt Library
+## Interactive Chat REPL
 
-The system includes 53 pre-configured prompts across 8 categories:
+The bootloader launches an **interactive chat REPL** (Read-Eval-Print Loop) where you can have real-time conversations with the language model.
+
+### Features:
+- **Real-time keyboard input** with backspace support
+- **Conversation context management** - maintains full chat history
+- **REPL commands**:
+  - `/help` - Show help menu
+  - `/quit` - Exit the REPL
+  - `/reset` - Clear conversation history
+  - `/temp X` - Set temperature (0.0 - 2.0)
+  - `/tokens` - Show context usage statistics
+
+### Example Session:
+```
+You: Hello! Tell me about space.
+Assistant: Space is vast and filled with stars, planets, and galaxies...
+
+You: /temp 0.5
+✅ Temperature set to: 0.50
+
+You: /tokens
+📊 Token Usage:
+   Used:      89 / 256 tokens (34.8%)
+   Remaining: 167 tokens
+
+You: /quit
+👋 Goodbye! Exiting REPL...
+```
+
+See [CHAT_REPL.md](CHAT_REPL.md) for full documentation.
+
+## Legacy Interactive Prompt Library (Old Demo Mode)
+
+The old demo mode included 53 pre-configured prompts across 8 categories:
 
 - Stories (7 prompts) - Fairy tales, dragons, princesses
 - Science (7 prompts) - Water cycle, gravity, solar system

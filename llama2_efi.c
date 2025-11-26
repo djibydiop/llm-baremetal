@@ -120,6 +120,15 @@ static inline int strncmp(const char* s1, const char* s2, int n) {
     return 0;
 }
 
+static inline int strcmp(const char* s1, const char* s2) {
+    int i = 0;
+    while (s1[i] && s2[i]) {
+        if (s1[i] != s2[i]) return s1[i] - s2[i];
+        i++;
+    }
+    return s1[i] - s2[i];
+}
+
 // ----------------------------------------------------------------------------
 // UEFI Console Colors
 #define EFI_BLACK            0x00
@@ -196,23 +205,6 @@ void print_separator(void) {
     set_color(EFI_DARKGRAY | EFI_BLACK << 4);
     Print(L"────────────────────────────────────────────────────────────────\r\n");
     reset_color();
-}
-
-// ----------------------------------------------------------------------------
-// String utilities for REPL
-
-int strcmp(const char* s1, const char* s2) {
-    while (*s1 && (*s1 == *s2)) {
-        s1++;
-        s2++;
-    }
-    return *(const unsigned char*)s1 - *(const unsigned char*)s2;
-}
-
-int str_len(const char* s) {
-    int len = 0;
-    while (s[len]) len++;
-    return len;
 }
 
 // ----------------------------------------------------------------------------
@@ -2551,6 +2543,230 @@ void enable_avx_silent() {
 }
 
 // ----------------------------------------------------------------------------
+// CHAT REPL - Interactive Conversation System
+
+// Chat REPL with conversation context management
+void chat_repl(EFI_SYSTEM_TABLE* ST, Transformer* transformer, Tokenizer* tokenizer, BOOLEAN use_text, float temperature) {
+    Print(L"\r\n╔════════════════════════════════════════════════════════╗\r\n");
+    Print(L"║            INTERACTIVE CHAT REPL v2.0                  ║\r\n");
+    Print(L"╚════════════════════════════════════════════════════════╝\r\n");
+    Print(L"\r\n");
+    Print(L"  Commands:\r\n");
+    Print(L"    /help    - Show this help message\r\n");
+    Print(L"    /reset   - Clear conversation history\r\n");
+    Print(L"    /quit    - Exit the REPL\r\n");
+    Print(L"    /temp X  - Set temperature (0.0 - 2.0)\r\n");
+    Print(L"    /tokens  - Show current token usage\r\n");
+    Print(L"\r\n");
+    Print(L"  Context: %d tokens max\r\n", transformer->config.seq_len);
+    Print(L"  Temperature: %.2f\r\n", temperature);
+    Print(L"\r\n");
+    Print(L"╔════════════════════════════════════════════════════════╗\r\n");
+    Print(L"║  Start chatting! Type your message and press Enter.   ║\r\n");
+    Print(L"╚════════════════════════════════════════════════════════╝\r\n");
+    
+    // Conversation state
+    char conversation_buffer[8192];  // Store full conversation
+    int conversation_tokens[512];     // Token sequence
+    int conversation_pos = 0;         // Current position in conversation
+    int turn_count = 0;               // Number of conversation turns
+    
+    conversation_buffer[0] = '\0';
+    
+    while (1) {
+        // Read user input
+        char user_input[512];
+        Print(L"\r\nYou: ");
+        int input_len = read_user_input(ST, user_input, 512);
+        
+        if (input_len == 0) continue;  // Empty input
+        
+        // Check for commands
+        if (user_input[0] == '/') {
+            // /quit command
+            if (strcmp(user_input, "/quit") == 0 || strcmp(user_input, "/q") == 0) {
+                Print(L"\r\n👋 Goodbye! Exiting REPL...\r\n\r\n");
+                break;
+            }
+            
+            // /reset command
+            if (strcmp(user_input, "/reset") == 0) {
+                conversation_pos = 0;
+                turn_count = 0;
+                conversation_buffer[0] = '\0';
+                Print(L"\r\n✅ Conversation reset. Starting fresh!\r\n");
+                continue;
+            }
+            
+            // /help command
+            if (strcmp(user_input, "/help") == 0) {
+                Print(L"\r\n╔════════════════════════════════════════════════════════╗\r\n");
+                Print(L"║                    HELP MENU                           ║\r\n");
+                Print(L"╚════════════════════════════════════════════════════════╝\r\n");
+                Print(L"\r\n");
+                Print(L"  Commands:\r\n");
+                Print(L"    /help    - Show this help message\r\n");
+                Print(L"    /reset   - Clear conversation history\r\n");
+                Print(L"    /quit    - Exit the REPL\r\n");
+                Print(L"    /temp X  - Set temperature (0.0 - 2.0)\r\n");
+                Print(L"    /tokens  - Show current token usage\r\n");
+                Print(L"\r\n");
+                Print(L"  Temperature Guide:\r\n");
+                Print(L"    0.0  - Deterministic (always same output)\r\n");
+                Print(L"    0.7  - Balanced (recommended)\r\n");
+                Print(L"    1.0  - Default creative\r\n");
+                Print(L"    1.5+ - Very creative/random\r\n");
+                Print(L"\r\n");
+                continue;
+            }
+            
+            // /tokens command
+            if (strcmp(user_input, "/tokens") == 0) {
+                int max_tokens = transformer->config.seq_len;
+                int remaining = max_tokens - conversation_pos;
+                float usage_pct = (float)conversation_pos / (float)max_tokens * 100.0f;
+                
+                Print(L"\r\n📊 Token Usage:\r\n");
+                Print(L"   Used:      %d / %d tokens (%.1f%%)\r\n", 
+                      conversation_pos, max_tokens, usage_pct);
+                Print(L"   Remaining: %d tokens\r\n", remaining);
+                Print(L"   Turns:     %d\r\n", turn_count);
+                Print(L"\r\n");
+                
+                if (remaining < 50) {
+                    Print(L"⚠️  Warning: Context nearly full! Use /reset to continue.\r\n");
+                }
+                continue;
+            }
+            
+            // /temp command
+            if (user_input[0] == '/' && user_input[1] == 't' && 
+                user_input[2] == 'e' && user_input[3] == 'm' && user_input[4] == 'p') {
+                // Parse temperature value
+                float new_temp = 1.0f;
+                // Simple parsing - look for number after "temp "
+                char* temp_str = user_input + 6;  // Skip "/temp "
+                // Basic float parsing (integer part only for simplicity)
+                if (*temp_str >= '0' && *temp_str <= '9') {
+                    new_temp = (float)(*temp_str - '0');
+                    if (*(temp_str + 1) == '.') {
+                        // Handle one decimal place
+                        if (*(temp_str + 2) >= '0' && *(temp_str + 2) <= '9') {
+                            new_temp += (float)(*(temp_str + 2) - '0') / 10.0f;
+                        }
+                    }
+                }
+                
+                if (new_temp >= 0.0f && new_temp <= 2.0f) {
+                    temperature = new_temp;
+                    Print(L"\r\n✅ Temperature set to: %.2f\r\n", temperature);
+                } else {
+                    Print(L"\r\n❌ Invalid temperature! Use 0.0 - 2.0\r\n");
+                }
+                continue;
+            }
+            
+            // Unknown command
+            Print(L"\r\n❌ Unknown command: %a\r\n", user_input);
+            Print(L"   Type /help for available commands.\r\n");
+            continue;
+        }
+        
+        // Check if we have room in context
+        if (conversation_pos >= transformer->config.seq_len - 100) {
+            Print(L"\r\n⚠️  Context window nearly full!\r\n");
+            Print(L"   Use /reset to clear history, or /quit to exit.\r\n");
+            continue;
+        }
+        
+        // Encode user input
+        int prompt_tokens[256];
+        int num_tokens = encode_prompt(tokenizer, user_input, prompt_tokens, 256);
+        
+        if (num_tokens == 0) {
+            Print(L"\r\n❌ Failed to encode input. Try again.\r\n");
+            continue;
+        }
+        
+        // Add to conversation history
+        for (int i = 0; i < num_tokens && conversation_pos < 512; i++) {
+            conversation_tokens[conversation_pos++] = prompt_tokens[i];
+        }
+        
+        // Generate response
+        Print(L"Assistant: ");
+        
+        int response_tokens = 0;
+        int max_response = 80;  // Max tokens in response
+        
+        // Generation loop
+        for (int step = 0; step < max_response; step++) {
+            // Get last token
+            int token = conversation_tokens[conversation_pos - 1];
+            
+            // Forward pass
+            float* logits = forward(transformer, token, conversation_pos - 1);
+            
+            if (logits == NULL) {
+                Print(L"\r\n[ERROR] Forward pass failed!\r\n");
+                break;
+            }
+            
+            // Sample next token
+            int next;
+            if (temperature == 0.0f) {
+                next = argmax(logits, transformer->config.vocab_size);
+            } else {
+                for (int i = 0; i < transformer->config.vocab_size; i++) {
+                    logits[i] /= temperature;
+                }
+                softmax(logits, transformer->config.vocab_size);
+                float coin = (float)rand_efi() / (float)RAND_MAX;
+                next = sample_mult(logits, transformer->config.vocab_size, coin);
+            }
+            
+            // Check for end of sequence
+            if (next == 1 || next == 2) break;  // EOS or newline
+            
+            // Decode and print token
+            if (use_text) {
+                char* piece = decode_token(tokenizer, next);
+                // Convert to CHAR16 and print
+                CHAR16 wpiece[256];
+                for (int i = 0; i < 255 && piece[i]; i++) {
+                    wpiece[i] = (CHAR16)piece[i];
+                    wpiece[i+1] = 0;
+                }
+                Print(L"%s", wpiece);
+            } else {
+                Print(L"[%d] ", next);
+            }
+            
+            // Add to conversation history
+            if (conversation_pos < 512) {
+                conversation_tokens[conversation_pos++] = next;
+                response_tokens++;
+            }
+            
+            // Stop if context full
+            if (conversation_pos >= transformer->config.seq_len - 10) {
+                Print(L"\r\n[Context limit reached]");
+                break;
+            }
+        }
+        
+        Print(L"\r\n");
+        turn_count++;
+        
+        // Show token usage warning
+        if (conversation_pos > transformer->config.seq_len * 0.8f) {
+            Print(L"⚠️  Context 80%% full (%d/%d tokens)\r\n", 
+                  conversation_pos, transformer->config.seq_len);
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------
 // EFI MAIN ENTRY POINT
 
 EFI_STATUS
@@ -2639,13 +2855,28 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     uint32_t seed = (uint32_t)((uintptr_t)&transformer ^ (uintptr_t)&tokenizer);
     srand_efi(seed);
     
-    // Mode selection - FORCED TO REPL MODE (keyboard input crashes in QEMU/OVMF)
-    Print(L"\r\n=== LLaMA2 Bare-Metal REPL ===\r\n");
-    Print(L"Starting in Interactive REPL mode...\r\n");
-    Print(L"(Keyboard input disabled - QEMU/OVMF limitation)\r\n\r\n");
+    // Launch Interactive Chat REPL
+    Print(L"\r\n╔════════════════════════════════════════════════════════╗\r\n");
+    Print(L"║          LAUNCHING CHAT REPL MODE                      ║\r\n");
+    Print(L"╚════════════════════════════════════════════════════════╝\r\n");
+    Print(L"\r\n");
     
-    int mode = 2;  // Force interactive REPL mode
+    // Call the interactive chat REPL
+    chat_repl(SystemTable, &transformer, &tokenizer, use_text, temperature);
     
+    // REPL exited - show goodbye message
+    Print(L"\r\n╔════════════════════════════════════════════════════════╗\r\n");
+    Print(L"║              SESSION ENDED                             ║\r\n");
+    Print(L"╚════════════════════════════════════════════════════════╝\r\n");
+    Print(L"\r\nThank you for using LLM Bare-Metal!\r\n\r\n");
+    
+    ST->BootServices->Stall(2000000); // 2 second delay
+    
+    return EFI_SUCCESS;
+}
+
+// OLD AUTO-GENERATE CODE (PRESERVED FOR REFERENCE - NOT USED)
+#if 0
     if (mode == 1) {
         // AUTO-GENERATE MODE (original behavior)
         int token = 1;  // Start with BOS
@@ -3074,4 +3305,5 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     ST->BootServices->Stall(2000000); // 2 seconds
     
     return EFI_SUCCESS;
-}
+#endif
+// END OF OLD AUTO-GENERATE CODE

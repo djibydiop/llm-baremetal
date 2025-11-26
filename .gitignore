@@ -77,6 +77,23 @@ quick-demo.ps1
 rebuild-and-test.ps1
 rebuild.py
 STATUS_REPORT.md
+test_autodetect.sh
+test_generation.sh
+test_performance.sh
+run_qemu_test.sh
+
+# Documentation files (session notes - not essential)
+BUG_FIX_CONFIG_SIZE.md
+CHANGELOG_v2.0.md
+FILES_MODIFIED.md
+HARDWARE_AUTO_DETECTION.md
+IMPROVEMENTS_SESSION_2025-11-25.md
+NETWORK_IMPLEMENTATION.md
+PERFORMANCE_ANALYSIS.md
+QEMU_TEST_42M_RESULTS.md
+QUICKSTART_v2.0.md
+STATUS_LOCAL_VS_GITHUB.md
+SUMMARY_v2.0.md
 
 # Build artifacts
 build*.log

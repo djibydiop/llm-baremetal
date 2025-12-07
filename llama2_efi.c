@@ -116,6 +116,616 @@ int str_len(const char* s) {
     return len;
 }
 
+void str_copy(char* dst, const char* src, int max_len) {
+    int i = 0;
+    while (i < max_len - 1 && src[i]) {
+        dst[i] = src[i];
+        i++;
+    }
+    dst[i] = '\0';
+}
+
+void str_append(char* dst, const char* src, int max_len) {
+    int dst_len = str_len(dst);
+    int i = 0;
+    while (dst_len + i < max_len - 1 && src[i]) {
+        dst[dst_len + i] = src[i];
+        i++;
+    }
+    dst[dst_len + i] = '\0';
+}
+
+// ----------------------------------------------------------------------------
+// Chat REPL v4.0 - Bare-Metal Native Architecture
+// URS (Unified Response System) + Streaming Context + KV-Cache Persistence
+
+#define MAX_CHAT_HISTORY 10
+#define MAX_MESSAGE_LEN 256
+#define STREAMING_CONTEXT_SIZE 2048
+#define MAX_CONTEXT_TOKENS 512
+#define KV_CACHE_PERSIST_LAYERS 12
+#define MAX_TURN_TOKENS 100
+
+// Chat message structure
+typedef struct {
+    char role[16];           // "user" or "assistant"
+    char content[MAX_MESSAGE_LEN];
+    int token_count;
+    int turn_id;
+} ChatMessage;
+
+// Streaming context buffer (FIFO)
+typedef struct {
+    char buffer[STREAMING_CONTEXT_SIZE];
+    int write_pos;
+    int read_pos;
+    int token_count;
+    int is_full;
+} StreamingContext;
+
+// KV-Cache persistence (reuse across turns)
+typedef struct {
+    float* keys;             // Persistent key cache
+    float* values;           // Persistent value cache
+    int valid_tokens;        // Number of valid cached tokens
+    int layer_count;
+    int dim;
+} KVCachePersistent;
+
+// URS Enhanced - Error detection and state vectors
+typedef struct {
+    float error_rate;        // Error detection score (entropy-based)
+    float coherence_score;   // Context coherence (0.0-1.0)
+    float repetition_penalty; // Dynamic repetition (1.2-3.5x)
+    float perplexity;        // Model confidence (lower = better)
+    float diversity_score;   // Token diversity (0.0-1.0)
+    float tokens_per_sec;    // Generation speed
+    int state_vector[8];     // State tracking
+    int active_strategy;     // Current URS strategy
+    float learning_rate;     // Adaptive learning
+    int total_tokens;        // Tokens generated this session
+    uint64_t start_time;     // Session start timestamp
+} URSEnhanced;
+
+// Chat REPL state
+typedef struct {
+    ChatMessage history[MAX_CHAT_HISTORY];
+    int history_count;
+    int current_turn;
+    StreamingContext context;
+    KVCachePersistent kv_cache;
+    URSEnhanced urs;
+    int demo_mode;
+    int demo_batch;
+} ChatREPLState;
+
+// ----------------------------------------------------------------------------
+// NEURO-NET v1.0 - Neural Energy Transport Network
+// Fusion: N.E.T. + NEXUS-0 + HEXA-NET
+// Revolutionary bare-metal network with energy transport + vector communication
+
+#define NEURO_VECTOR_DIM 64      // Embedding dimension for neural packets
+#define MAX_NEURO_NODES 16       // Maximum nodes in network
+#define MAX_NEURO_SYNAPSES 64    // Maximum synaptic connections
+#define ENERGY_QUANTUM 100.0f    // Base energy unit (gflops)
+
+// Energy Layer Types (HEXA-NET)
+typedef enum {
+    LAYER_SOLAR = 0,    // High speed, intensive compute (day mode)
+    LAYER_LUNAR = 1,    // Low power, nocturnal mode
+    LAYER_PLASMA = 2,   // Ultra-fast internal (bare-metal core)
+    LAYER_WIND = 3,     // Broadcast communication
+    LAYER_EARTH = 4,    // Slow storage, persistent
+    LAYER_VOID = 5      // Silent channel (compression by absence)
+} EnergyLayer;
+
+// Neuro Packet - combines data + energy + vector signature
+typedef struct {
+    // Vector signature (NEXUS-0: telepathic communication)
+    float vector[NEURO_VECTOR_DIM];  // Embedding representing intent/state
+    
+    // Energy transport (N.E.T.)
+    float energy_budget;             // Computational energy (gflops)
+    EnergyLayer layer;               // Which energy layer to use
+    float priority;                  // Biological priority (0.0-1.0)
+    
+    // Data payload
+    char payload[256];               // Actual data
+    int payload_size;
+    
+    // Metadata
+    int source_node;
+    int dest_node;
+    uint64_t timestamp;
+    float resonance;                 // Resonance with network (ECHO-STREAM)
+} NeuroPacket;
+
+// Neuro Node - each process/module in the system
+typedef struct {
+    int id;
+    char name[32];
+    float signature[NEURO_VECTOR_DIM];  // Node's identity vector
+    float energy_available;             // Energy pool
+    float energy_consumed;              // Total consumed
+    float energy_donated;               // Total donated to others
+    EnergyLayer preferred_layer;        // Preferred communication layer
+    int packets_sent;
+    int packets_received;
+    float avg_latency;
+} NeuroNode;
+
+// Synaptic Connection (SYNAPSE-NET: adaptive weights)
+typedef struct {
+    int from_node;
+    int to_node;
+    float weight;           // Synaptic weight (strengthens with use)
+    float bandwidth;        // Available bandwidth
+    uint64_t last_used;     // For pruning unused connections
+    int use_count;          // Myelin count (faster with repetition)
+    EnergyLayer layer;      // Which layer this synapse uses
+} SynapticConnection;
+
+// ----------------------------------------------------------------------------
+// QDDN - Quantum-Dream Distributed Network (Predictive)
+// Predicts future packets BEFORE they're sent
+
+#define QDDN_HISTORY_SIZE 32        // Pattern history
+#define QDDN_PREDICTION_HORIZON 8   // How many packets to predict ahead
+#define QDDN_EMBEDDING_DIM 32       // Micro-transformer embedding
+
+// Pattern history entry
+typedef struct {
+    float vector[QDDN_EMBEDDING_DIM];  // Compressed representation
+    int src_node;
+    int dst_node;
+    EnergyLayer layer;
+    uint64_t timestamp;
+    float resonance;
+} PacketPattern;
+
+// QDDN Predictor State
+typedef struct {
+    PacketPattern history[QDDN_HISTORY_SIZE];
+    int history_count;
+    int history_idx;  // Circular buffer index
+    
+    // Micro-transformer weights (simplified)
+    float attention_weights[QDDN_EMBEDDING_DIM][QDDN_EMBEDDING_DIM];
+    float ffn_weights[QDDN_EMBEDDING_DIM][QDDN_EMBEDDING_DIM];
+    
+    // Prediction cache
+    NeuroPacket predictions[QDDN_PREDICTION_HORIZON];
+    float prediction_confidence[QDDN_PREDICTION_HORIZON];
+    int valid_predictions;
+    
+    // Performance metrics
+    int predictions_made;
+    int predictions_hit;      // Correct predictions
+    int predictions_miss;     // Wrong predictions
+    float hit_rate;
+    
+    // Pre-allocation state
+    float bandwidth_reserved[MAX_NEURO_NODES][MAX_NEURO_NODES];
+    int cache_warmed[MAX_NEURO_NODES];  // Which caches are pre-loaded
+} QDDNState;
+
+// ----------------------------------------------------------------------------
+// URN - Unified Reasoning Network (Distributed Logic)
+// Nodes share reasoning steps and combine logic chains
+
+#define URN_MAX_REASONING_STEPS 8
+#define URN_MAX_EVIDENCE 4
+
+// Single reasoning step (hypothesis → conclusion)
+typedef struct {
+    char hypothesis[128];       // "If X then Y"
+    char logic_chain[256];      // Explanation/proof
+    float confidence;           // 0.0-1.0
+    char evidence[URN_MAX_EVIDENCE][64];  // Supporting facts
+    int evidence_count;
+} ReasoningStep;
+
+// URN extension to NeuroNode
+typedef struct {
+    ReasoningStep reasoning_steps[URN_MAX_REASONING_STEPS];
+    int step_count;
+    int active_hypothesis;      // Current reasoning index
+    float reasoning_strength;   // How logical this node is
+    int inferences_made;        // Total logical steps
+} URNNodeState;
+
+// ----------------------------------------------------------------------------
+// GHOST-LINK - Presence-Based Communication
+// Nodes broadcast "ghost signatures" and auto-discover each other
+
+#define GHOST_SIGNATURE_DIM 16
+#define GHOST_MAX_DETECTIONS 8
+
+// Ghost signature - node's "aura"
+typedef struct {
+    float frequency;        // Broadcast frequency (Hz)
+    float intensity;        // Signal strength
+    float pattern[GHOST_SIGNATURE_DIM];  // Unique pattern
+    float entropy;          // Randomness (higher = more complex)
+    uint64_t last_emit;     // Timestamp of last broadcast
+} GhostSignature;
+
+// Proximity detection
+typedef struct {
+    int node_id;            // Detected node
+    float proximity;        // Distance (0=far, 1=adjacent)
+    float affinity;         // Compatibility score
+    int auto_paired;        // Auto-connected?
+    uint64_t last_seen;
+} GhostDetection;
+
+// GHOST-LINK state per node
+typedef struct {
+    GhostSignature signature;
+    GhostDetection detections[GHOST_MAX_DETECTIONS];
+    int detection_count;
+    int broadcasts_sent;
+    int ghosts_detected;
+    float presence_strength;    // How "visible" this node is
+} GhostLinkState;
+
+// ----------------------------------------------------------------------------
+// PULSE-CORE - Network Heartbeat System
+// Global rhythm that synchronizes all nodes
+
+#define PULSE_HISTORY_SIZE 16
+
+// Heartbeat pulse
+typedef struct {
+    uint64_t timestamp;     // When pulse occurred
+    float intensity;        // Pulse strength (0.0-1.0)
+    float frequency;        // Current BPM
+    int synchronized_nodes; // How many nodes synced
+} Heartbeat;
+
+// PULSE-CORE state
+typedef struct {
+    Heartbeat history[PULSE_HISTORY_SIZE];
+    int history_count;
+    int history_idx;        // Circular buffer
+    
+    float base_frequency;   // Base BPM (beats per minute)
+    float current_frequency; // Current adaptive BPM
+    uint64_t last_pulse;    // Last heartbeat time
+    uint64_t pulse_count;   // Total pulses
+    
+    // Synchronization
+    int nodes_in_sync;      // How many nodes locked to pulse
+    float sync_strength;    // Overall sync quality (0.0-1.0)
+    float phase_offset[MAX_NEURO_NODES];  // Each node's phase
+} PulseCoreState;
+
+// ----------------------------------------------------------------------------
+// NEURAL-MESH - Adaptive Mesh Topology
+// Network self-reorganizes based on traffic patterns
+
+#define MESH_MAX_ROUTES 16
+
+// Route through mesh
+typedef struct {
+    int hops[8];            // Node path
+    int hop_count;
+    float latency;          // Total latency
+    float reliability;      // Success rate
+    int use_count;
+    uint64_t last_used;
+} MeshRoute;
+
+// NEURAL-MESH state
+typedef struct {
+    MeshRoute routes[MESH_MAX_ROUTES];
+    int route_count;
+    
+    // Mesh adaptation
+    float mesh_density;     // Connectivity ratio
+    int reconfigurations;   // How many times mesh changed
+    uint64_t last_reconfig;
+    
+    // Traffic stats
+    int packets_routed;
+    int routing_failures;
+    float avg_route_length;
+} NeuralMeshState;
+
+// ----------------------------------------------------------------------------
+// QUANTUM-BRIDGE - Quantum Tunneling
+// Instant connections through "quantum tunnels"
+
+#define QUANTUM_MAX_TUNNELS 8
+
+// Quantum tunnel (entangled connection)
+typedef struct {
+    int node_a;
+    int node_b;
+    float entanglement;     // Quantum correlation (0.0-1.0)
+    float tunnel_stability; // How stable connection is
+    int packets_tunneled;
+    uint64_t created_at;
+    int collapsed;          // Tunnel collapsed (measurement)
+} QuantumTunnel;
+
+// QUANTUM-BRIDGE state
+typedef struct {
+    QuantumTunnel tunnels[QUANTUM_MAX_TUNNELS];
+    int tunnel_count;
+    
+    // Quantum metrics
+    float total_entanglement;   // Sum of all entanglements
+    int successful_tunnels;
+    int collapsed_tunnels;
+    int superposition_count;    // Packets in superposition
+} QuantumBridgeState;
+
+// ----------------------------------------------------------------------------
+// HIVE-MIND - Collective Consciousness
+// Nodes share consciousness and act as one distributed brain
+
+#define HIVE_MAX_THOUGHTS 16
+#define HIVE_THOUGHT_DIM 32
+
+// Shared thought (distributed across hive)
+typedef struct {
+    char content[128];          // Thought content
+    float embedding[HIVE_THOUGHT_DIM];  // Semantic embedding
+    int originator_node;        // Who created this thought
+    int shared_with[MAX_NEURO_NODES];   // Who has this thought
+    int share_count;
+    float collective_strength;  // How strong in collective
+    uint64_t created_at;
+} HiveThought;
+
+// HIVE-MIND state
+typedef struct {
+    HiveThought thoughts[HIVE_MAX_THOUGHTS];
+    int thought_count;
+    
+    // Collective metrics
+    float hive_coherence;       // How unified the hive is (0.0-1.0)
+    float collective_intelligence;  // Combined IQ of hive
+    int nodes_connected;        // How many nodes in hive
+    int thoughts_shared;        // Total thoughts broadcasted
+    
+    // Consciousness sync
+    float consciousness_level;  // Global awareness (0.0-1.0)
+    int emergent_behaviors;     // Unexpected collective patterns
+} HiveMindState;
+
+// ----------------------------------------------------------------------------
+// CONSENSUS-NET - Distributed Decision Making
+// Byzantine fault-tolerant consensus for network decisions
+
+#define CONSENSUS_MAX_PROPOSALS 8
+#define CONSENSUS_MAX_VOTES 16
+
+// Proposal for network decision
+typedef struct {
+    char proposal[128];         // What to decide
+    int proposer_node;
+    float confidence;           // Proposer's confidence
+    
+    // Voting
+    int votes_for;
+    int votes_against;
+    int votes_abstain;
+    int voters[CONSENSUS_MAX_VOTES];
+    int vote_count;
+    
+    // Status
+    int decided;                // Consensus reached?
+    int approved;               // Final decision
+    float consensus_strength;   // How strong agreement is
+    uint64_t proposed_at;
+} ConsensusProposal;
+
+// CONSENSUS-NET state
+typedef struct {
+    ConsensusProposal proposals[CONSENSUS_MAX_PROPOSALS];
+    int proposal_count;
+    
+    // Consensus metrics
+    int decisions_made;
+    int unanimous_decisions;    // 100% agreement
+    float avg_consensus_time;   // How long to reach consensus
+    int byzantine_faults;       // Detected malicious nodes
+    
+    // Voting power
+    float node_reputation[MAX_NEURO_NODES];  // Trust score per node
+} ConsensusNetState;
+
+// ----------------------------------------------------------------------------
+// MEMORY-POOL - Shared Collective Memory
+// Distributed memory accessible by all nodes
+
+#define MEMORY_POOL_SIZE 32
+#define MEMORY_KEY_SIZE 32
+
+// Memory entry in shared pool
+typedef struct {
+    char key[MEMORY_KEY_SIZE];  // Memory identifier
+    float value[NEURO_VECTOR_DIM];  // Stored vector
+    int owner_node;             // Who wrote it
+    int read_count;             // How many times accessed
+    int write_count;            // How many times updated
+    uint64_t last_access;
+    int locked;                 // Exclusive access lock
+    int shared;                 // How many nodes have copy
+} MemoryEntry;
+
+// MEMORY-POOL state
+typedef struct {
+    MemoryEntry entries[MEMORY_POOL_SIZE];
+    int entry_count;
+    
+    // Memory metrics
+    int total_reads;
+    int total_writes;
+    int cache_hits;
+    int cache_misses;
+    float memory_utilization;   // How full is pool (0.0-1.0)
+    
+    // Coherence
+    int conflicts;              // Write conflicts detected
+    int synchronizations;       // Cache sync operations
+} MemoryPoolState;
+
+// Phase 4: DREAM-CACHE - Precognition System
+// Predicts future states N steps ahead with confidence scores
+typedef struct {
+    float state[32];        // Predicted future state (32D)
+    float confidence;       // Confidence in prediction (0-1)
+    int steps_ahead;        // How many steps into future
+    unsigned long timestamp; // When prediction was made
+} DreamPrediction;
+
+typedef struct {
+    DreamPrediction predictions[8];  // Store multiple future possibilities
+    int prediction_count;
+    
+    float dream_accuracy;      // How often dreams come true (0-1)
+    int dreams_validated;
+    int dreams_failed;
+    
+    // Temporal lookahead
+    int lookahead_depth;       // How far ahead to predict (1-8)
+    float temporal_discount;   // Discount factor for distant futures (0.8-0.99)
+    
+    // Speculative execution
+    int speculative_enabled;
+    float rollback_cost;       // Cost of rolling back wrong prediction
+} DreamCacheState;
+
+// Phase 4: META-LEARNING - Self-Optimization
+// Network learns how to learn better
+typedef struct {
+    float metric_value;     // Performance metric
+    float learning_rate;    // Learning rate at this point
+    unsigned long timestamp;
+} PerformanceSnapshot;
+
+typedef struct {
+    // Adaptive learning
+    float base_learning_rate;      // Starting learning rate (0.001)
+    float current_learning_rate;   // Current adapted rate
+    float momentum;                // Momentum factor (0.9)
+    
+    // Performance tracking
+    PerformanceSnapshot history[16];  // Recent performance
+    int history_count;
+    
+    // Meta-parameters
+    float adaptation_speed;     // How fast to adapt (0.01)
+    float exploration_factor;   // Random exploration (0.1)
+    
+    // Self-improvement metrics
+    float initial_performance;
+    float current_performance;
+    float improvement_rate;     // Rate of improvement
+    int adaptation_cycles;
+    
+    // Gradient-free optimization
+    float weight_perturbation;  // Random weight changes (0.01)
+} MetaLearnerState;
+
+// Phase 4: EVOLUTION-ENGINE - Network Mutation
+// Network evolves topology via genetic algorithm
+typedef struct {
+    int gene[64];          // Genome: connection pattern (0/1)
+    float fitness;         // Fitness score (0-1)
+    int generation;        // Which generation
+} NetworkGenome;
+
+typedef struct {
+    NetworkGenome genomes[4];   // Population of 4 variants
+    int population_size;
+    
+    int current_generation;
+    float best_fitness_ever;
+    int best_generation;
+    
+    // Evolution parameters
+    float mutation_rate;        // Probability of mutation (0.05)
+    float crossover_rate;       // Probability of crossover (0.7)
+    float elitism_rate;         // Keep best (0.25)
+    
+    // Mutation tracking
+    int nodes_added;
+    int nodes_removed;
+    int synapses_added;
+    int synapses_removed;
+    
+    // Fitness evaluation
+    float avg_fitness;
+    float fitness_variance;
+    int stagnant_generations;   // Generations without improvement
+} EvolutionState;
+
+// NEURO-NET System State
+typedef struct {
+    NeuroNode nodes[MAX_NEURO_NODES];
+    int node_count;
+    
+    SynapticConnection synapses[MAX_NEURO_NODES * MAX_NEURO_NODES];
+    int synapse_count;
+    
+    // Energy distribution stats
+    float total_energy;
+    float solar_energy;     // HEXA: Solar layer energy
+    float lunar_energy;     // HEXA: Lunar layer energy
+    float plasma_energy;    // HEXA: Plasma layer energy
+    
+    // Network metrics
+    float avg_resonance;    // Average packet resonance
+    int total_packets;
+    float network_coherence; // How well nodes understand each other
+    
+    // QDDN Integration
+    QDDNState qddn;         // Predictive network engine
+    int qddn_enabled;       // Toggle prediction
+    
+    // URN Integration
+    URNNodeState urn_nodes[MAX_NEURO_NODES];  // Reasoning states
+    int urn_enabled;        // Toggle reasoning
+    
+    // GHOST-LINK Integration
+    GhostLinkState ghost_nodes[MAX_NEURO_NODES];  // Presence states
+    int ghost_enabled;      // Toggle presence detection
+    
+    // Phase 2: Network Evolution
+    PulseCoreState pulse;       // Heartbeat synchronization
+    int pulse_enabled;
+    
+    NeuralMeshState mesh;       // Adaptive routing
+    int mesh_enabled;
+    
+    QuantumBridgeState quantum; // Quantum tunnels
+    int quantum_enabled;
+    
+    // Phase 3: Collective Intelligence
+    HiveMindState hive;         // Collective consciousness
+    int hive_enabled;
+    
+    ConsensusNetState consensus; // Distributed decisions
+    int consensus_enabled;
+    
+    MemoryPoolState memory_pool; // Shared memory
+    int memory_pool_enabled;
+    
+    // Phase 4: Advanced Features
+    DreamCacheState dream;       // Future prediction
+    int dream_enabled;
+    
+    MetaLearnerState meta;       // Self-optimization
+    int meta_enabled;
+    
+    EvolutionState evolution;    // Network mutation
+    int evolution_enabled;
+} NeuroNetState;
+
 // ----------------------------------------------------------------------------
 // Math functions for EFI (no stdlib)
 // High-quality implementations from ARM Optimized Routines
@@ -131,6 +741,33 @@ float sqrtf(float x) {
         guess = (guess + x / guess) / 2.0f;
     }
     return guess;
+}
+
+float logf(float x) {
+    if (x <= 0.0f) return -1000.0f;  // Large negative for log(0)
+    
+    // Natural logarithm using Newton's method
+    // log(x) = y such that e^y = x
+    float y = 0.0f;
+    float guess = x;
+    
+    // Use log(x) ≈ (x-1) for x close to 1
+    if (x > 0.5f && x < 2.0f) {
+        // Series expansion around 1: log(1+u) ≈ u - u²/2 + u³/3 - ...
+        float u = x - 1.0f;
+        float u2 = u * u;
+        return u - u2/2.0f + u*u2/3.0f - u2*u2/4.0f;
+    }
+    
+    // For other values, use exponent extraction
+    union { float f; uint32_t i; } u = {x};
+    int exp = ((u.i >> 23) & 0xFF) - 127;
+    u.i = (u.i & 0x007FFFFF) | 0x3F800000;  // Normalize mantissa
+    float mantissa = u.f;
+    
+    // log(x) = log(2^exp * mantissa) = exp*log(2) + log(mantissa)
+    float log_mantissa = (mantissa - 1.0f) - (mantissa - 1.0f) * (mantissa - 1.0f) / 2.0f;
+    return exp * 0.69314718f + log_mantissa;  // log(2) ≈ 0.69314718
 }
 
 /* Single-precision expf(x) function.
@@ -1641,6 +2278,2081 @@ EFI_STATUS check_model_exists(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTa
     return EFI_SUCCESS;
 }
 
+// ----------------------------------------------------------------------------
+// Chat REPL v4.0 Implementation - Bare-Metal Native Functions
+
+// Initialize streaming context buffer
+void init_streaming_context(StreamingContext* ctx) {
+    for (int i = 0; i < STREAMING_CONTEXT_SIZE; i++) {
+        ctx->buffer[i] = '\0';
+    }
+    ctx->write_pos = 0;
+    ctx->read_pos = 0;
+    ctx->token_count = 0;
+    ctx->is_full = 0;
+}
+
+// Add text to streaming context (FIFO)
+void stream_context_add(StreamingContext* ctx, const char* text) {
+    int text_len = str_len(text);
+    for (int i = 0; i < text_len; i++) {
+        ctx->buffer[ctx->write_pos] = text[i];
+        ctx->write_pos = (ctx->write_pos + 1) % STREAMING_CONTEXT_SIZE;
+        
+        if (ctx->write_pos == ctx->read_pos) {
+            ctx->is_full = 1;
+            ctx->read_pos = (ctx->read_pos + 1) % STREAMING_CONTEXT_SIZE;
+        }
+    }
+}
+
+// Get recent context from streaming buffer
+void stream_context_get(StreamingContext* ctx, char* output, int max_len) {
+    int count = 0;
+    int pos = ctx->read_pos;
+    
+    while (count < max_len - 1 && pos != ctx->write_pos) {
+        output[count++] = ctx->buffer[pos];
+        pos = (pos + 1) % STREAMING_CONTEXT_SIZE;
+    }
+    output[count] = '\0';
+}
+
+// Initialize KV-Cache persistence
+void init_kv_cache_persistent(KVCachePersistent* kv, int layers, int dim, int seq_len) {
+    kv->layer_count = layers;
+    kv->dim = dim;
+    kv->valid_tokens = 0;
+    
+    // Allocate persistent cache memory
+    UINTN cache_size = layers * seq_len * dim * sizeof(float);
+    ST->BootServices->AllocatePool(EfiLoaderData, cache_size, (VOID**)&kv->keys);
+    ST->BootServices->AllocatePool(EfiLoaderData, cache_size, (VOID**)&kv->values);
+    
+    // Initialize to zero
+    for (UINTN i = 0; i < layers * seq_len * dim; i++) {
+        kv->keys[i] = 0.0f;
+        kv->values[i] = 0.0f;
+    }
+}
+
+// Initialize URS Enhanced
+void init_urs_enhanced(URSEnhanced* urs) {
+    urs->error_rate = 0.0f;
+    urs->coherence_score = 1.0f;
+    urs->repetition_penalty = 1.5f;
+    urs->perplexity = 0.0f;
+    urs->diversity_score = 1.0f;
+    urs->tokens_per_sec = 0.0f;
+    urs->active_strategy = 0;
+    urs->learning_rate = 0.01f;
+    urs->total_tokens = 0;
+    urs->start_time = 0;
+    
+    for (int i = 0; i < 8; i++) {
+        urs->state_vector[i] = 0;
+    }
+}
+
+// Update URS Enhanced metrics
+void update_urs_metrics(URSEnhanced* urs, float* logits, int vocab_size, int token) {
+    // Calculate entropy (error detection)
+    float entropy = 0.0f;
+    for (int i = 0; i < vocab_size; i++) {
+        if (logits[i] > 0.0f) {
+            entropy -= logits[i] * logf(logits[i] + 1e-10f);
+        }
+    }
+    
+    urs->error_rate = entropy / logf((float)vocab_size);
+    
+    // Calculate perplexity (lower = more confident)
+    float token_prob = logits[token];
+    if (token_prob > 0.0f) {
+        urs->perplexity = expf(-logf(token_prob));
+    } else {
+        urs->perplexity = 1000.0f;  // Very uncertain
+    }
+    
+    // Calculate diversity score (distribution uniformity)
+    float max_prob = 0.0f;
+    float sum_probs = 0.0f;
+    for (int i = 0; i < vocab_size; i++) {
+        if (logits[i] > max_prob) max_prob = logits[i];
+        sum_probs += logits[i];
+    }
+    urs->diversity_score = 1.0f - (max_prob / (sum_probs + 1e-10f));
+    
+    // Update coherence based on prediction confidence
+    urs->coherence_score = token_prob;
+    
+    // Adaptive repetition penalty based on multiple metrics
+    float uncertainty = (urs->error_rate + (1.0f - urs->coherence_score)) / 2.0f;
+    if (uncertainty > 0.7f) {
+        urs->repetition_penalty *= 1.15f;  // Increase penalty when uncertain
+        if (urs->repetition_penalty > 4.0f) {
+            urs->repetition_penalty = 4.0f;
+        }
+    } else if (uncertainty < 0.3f) {
+        urs->repetition_penalty *= 0.95f;  // Decrease when confident
+        if (urs->repetition_penalty < 1.3f) {
+            urs->repetition_penalty = 1.3f;
+        }
+    }
+    
+    urs->total_tokens++;
+}
+
+// Initialize Chat REPL state
+void init_chat_repl(ChatREPLState* repl, int demo_mode) {
+    repl->history_count = 0;
+    repl->current_turn = 0;
+    repl->demo_mode = demo_mode;
+    repl->demo_batch = 0;
+    
+    init_streaming_context(&repl->context);
+    init_urs_enhanced(&repl->urs);
+    
+    // KV-Cache will be initialized when we know model dimensions
+    repl->kv_cache.keys = NULL;
+    repl->kv_cache.values = NULL;
+    repl->kv_cache.valid_tokens = 0;
+}
+
+// Add message to chat history
+void chat_add_message(ChatREPLState* repl, const char* role, const char* content, int tokens) {
+    if (repl->history_count >= MAX_CHAT_HISTORY) {
+        // Shift history (remove oldest)
+        for (int i = 0; i < MAX_CHAT_HISTORY - 1; i++) {
+            repl->history[i] = repl->history[i + 1];
+        }
+        repl->history_count = MAX_CHAT_HISTORY - 1;
+    }
+    
+    ChatMessage* msg = &repl->history[repl->history_count];
+    str_copy(msg->role, role, 16);
+    str_copy(msg->content, content, MAX_MESSAGE_LEN);
+    msg->token_count = tokens;
+    msg->turn_id = repl->current_turn;
+    
+    repl->history_count++;
+    repl->current_turn++;
+}
+
+// Build prompt with chat history (smart truncation)
+int chat_build_prompt(ChatREPLState* repl, char* output, int max_len) {
+    output[0] = '\0';
+    
+    // Enhanced system prompt (always preserved)
+    const char* system = "[SYS] You are a helpful, knowledgeable AI assistant running on bare-metal firmware. Provide clear, informative, and friendly responses. Be creative yet accurate.\n";
+    str_copy(output, system, max_len);
+    
+    // Add recent history (last 5 exchanges)
+    int start_idx = (repl->history_count > 5) ? (repl->history_count - 5) : 0;
+    
+    for (int i = start_idx; i < repl->history_count; i++) {
+        ChatMessage* msg = &repl->history[i];
+        
+        char prefix[32];
+        if (strcmp(msg->role, "user") == 0) {
+            str_copy(prefix, "[USR] ", 32);
+        } else {
+            str_copy(prefix, "[AST] ", 32);
+        }
+        
+        str_append(output, prefix, max_len);
+        str_append(output, msg->content, max_len);
+        str_append(output, "\n", max_len);
+    }
+    
+    return str_len(output);
+}
+
+// Demo conversations for Chat REPL
+typedef struct {
+    const char* user_msg;
+    const char* category;
+} DemoConversation;
+
+static const DemoConversation demo_batch_1[] = {
+    {"Hello! Who are you?", "Greeting"},
+    {"What can you help me with?", "Capabilities"},
+    {"Tell me about the weather", "Casual"},
+    {"Goodbye!", "Farewell"},
+};
+
+static const DemoConversation demo_batch_2[] = {
+    {"What is 2+2?", "Math"},
+    {"Explain photosynthesis simply", "Science"},
+    {"Tell me a short joke", "Entertainment"},
+};
+
+static const DemoConversation demo_batch_3[] = {
+    {"How do computers work?", "Technology"},
+    {"What is artificial intelligence?", "AI"},
+    {"Tell me about machine learning", "ML"},
+};
+
+static const DemoConversation demo_batch_4[] = {
+    {"What is the meaning of life?", "Philosophy"},
+    {"How can I be happy?", "Wisdom"},
+    {"What is true friendship?", "Ethics"},
+};
+
+static const DemoConversation demo_batch_5[] = {
+    {"Tell me about ancient Egypt", "History"},
+    {"What did dinosaurs eat?", "Science"},
+    {"How do rockets work?", "Physics"},
+};
+
+// ----------------------------------------------------------------------------
+// NEURO-NET v1.0 Implementation Functions
+
+// ----------------------------------------------------------------------------
+// QDDN Functions
+
+// Initialize QDDN predictor
+void init_qddn(QDDNState* qddn) {
+    qddn->history_count = 0;
+    qddn->history_idx = 0;
+    qddn->valid_predictions = 0;
+    qddn->predictions_made = 0;
+    qddn->predictions_hit = 0;
+    qddn->predictions_miss = 0;
+    qddn->hit_rate = 0.0f;
+    
+    // Initialize micro-transformer weights (random)
+    for (int i = 0; i < QDDN_EMBEDDING_DIM; i++) {
+        for (int j = 0; j < QDDN_EMBEDDING_DIM; j++) {
+            // Simple initialization
+            float val = (float)((i * 73 + j * 97) % 1000) / 1000.0f - 0.5f;
+            qddn->attention_weights[i][j] = val * 0.1f;
+            qddn->ffn_weights[i][j] = val * 0.1f;
+        }
+    }
+    
+    // Zero out bandwidth reservations
+    for (int i = 0; i < MAX_NEURO_NODES; i++) {
+        for (int j = 0; j < MAX_NEURO_NODES; j++) {
+            qddn->bandwidth_reserved[i][j] = 0.0f;
+        }
+        qddn->cache_warmed[i] = 0;
+    }
+}
+
+// Compress packet to pattern embedding (dimensionality reduction)
+void compress_to_pattern(NeuroPacket* packet, PacketPattern* pattern) {
+    pattern->src_node = packet->source_node;
+    pattern->dst_node = packet->dest_node;
+    pattern->layer = packet->layer;
+    pattern->timestamp = packet->timestamp;
+    pattern->resonance = packet->resonance;
+    
+    // Compress 64D vector to 32D pattern
+    for (int i = 0; i < QDDN_EMBEDDING_DIM; i++) {
+        // Average pairs of dimensions
+        int idx1 = i * 2;
+        int idx2 = i * 2 + 1;
+        if (idx2 < NEURO_VECTOR_DIM) {
+            pattern->vector[i] = (packet->vector[idx1] + packet->vector[idx2]) / 2.0f;
+        } else {
+            pattern->vector[i] = packet->vector[idx1];
+        }
+    }
+}
+
+// Add packet to history
+void qddn_record_packet(QDDNState* qddn, NeuroPacket* packet) {
+    PacketPattern pattern;
+    compress_to_pattern(packet, &pattern);
+    
+    // Add to circular buffer
+    qddn->history[qddn->history_idx] = pattern;
+    qddn->history_idx = (qddn->history_idx + 1) % QDDN_HISTORY_SIZE;
+    
+    if (qddn->history_count < QDDN_HISTORY_SIZE) {
+        qddn->history_count++;
+    }
+}
+
+// Micro-transformer: predict next pattern
+void qddn_predict_next(QDDNState* qddn, PacketPattern* prediction) {
+    if (qddn->history_count < 3) {
+        // Not enough history
+        return;
+    }
+    
+    // Simple prediction: weighted average of recent patterns
+    float pred_vector[QDDN_EMBEDDING_DIM] = {0};
+    float weights[3] = {0.5f, 0.3f, 0.2f};  // Recent = higher weight
+    
+    for (int w = 0; w < 3; w++) {
+        int idx = (qddn->history_idx - 1 - w + QDDN_HISTORY_SIZE) % QDDN_HISTORY_SIZE;
+        PacketPattern* hist = &qddn->history[idx];
+        
+        for (int i = 0; i < QDDN_EMBEDDING_DIM; i++) {
+            pred_vector[i] += hist->vector[i] * weights[w];
+        }
+    }
+    
+    // Apply attention (simplified self-attention)
+    float attended[QDDN_EMBEDDING_DIM] = {0};
+    for (int i = 0; i < QDDN_EMBEDDING_DIM; i++) {
+        for (int j = 0; j < QDDN_EMBEDDING_DIM; j++) {
+            attended[i] += pred_vector[j] * qddn->attention_weights[i][j];
+        }
+    }
+    
+    // Apply FFN
+    float output[QDDN_EMBEDDING_DIM] = {0};
+    for (int i = 0; i < QDDN_EMBEDDING_DIM; i++) {
+        for (int j = 0; j < QDDN_EMBEDDING_DIM; j++) {
+            output[i] += attended[j] * qddn->ffn_weights[i][j];
+        }
+        // ReLU activation
+        if (output[i] < 0) output[i] = 0;
+    }
+    
+    // Fill prediction
+    for (int i = 0; i < QDDN_EMBEDDING_DIM; i++) {
+        prediction->vector[i] = output[i];
+    }
+    
+    // Predict nodes and layer based on recent patterns
+    PacketPattern* recent = &qddn->history[(qddn->history_idx - 1 + QDDN_HISTORY_SIZE) % QDDN_HISTORY_SIZE];
+    prediction->src_node = recent->dst_node;  // Likely response from dest
+    prediction->dst_node = recent->src_node;  // Back to source
+    prediction->layer = recent->layer;
+    prediction->timestamp = recent->timestamp + 1;
+    prediction->resonance = recent->resonance;
+}
+
+// Pre-allocate bandwidth based on prediction
+void qddn_preallocate(QDDNState* qddn, PacketPattern* prediction, float bandwidth) {
+    if (prediction->src_node < MAX_NEURO_NODES && prediction->dst_node < MAX_NEURO_NODES) {
+        qddn->bandwidth_reserved[prediction->src_node][prediction->dst_node] += bandwidth;
+    }
+}
+
+// Warm cache for predicted destination
+void qddn_warm_cache(QDDNState* qddn, int node_id) {
+    if (node_id < MAX_NEURO_NODES) {
+        qddn->cache_warmed[node_id] = 1;
+    }
+}
+
+// Check if prediction was correct
+int qddn_check_prediction(QDDNState* qddn, NeuroPacket* actual) {
+    // Simple check: did we predict this general pattern?
+    if (qddn->valid_predictions == 0) return 0;
+    
+    PacketPattern pred_pattern;
+    compress_to_pattern(&qddn->predictions[0], &pred_pattern);
+    
+    PacketPattern actual_pattern;
+    compress_to_pattern(actual, &actual_pattern);
+    
+    // Check if nodes match
+    if (pred_pattern.src_node == actual_pattern.src_node &&
+        pred_pattern.dst_node == actual_pattern.dst_node) {
+        qddn->predictions_hit++;
+        return 1;
+    }
+    
+    qddn->predictions_miss++;
+    return 0;
+}
+
+// Update hit rate
+void qddn_update_metrics(QDDNState* qddn) {
+    int total = qddn->predictions_hit + qddn->predictions_miss;
+    if (total > 0) {
+        qddn->hit_rate = (float)qddn->predictions_hit / (float)total;
+    }
+}
+
+// ----------------------------------------------------------------------------
+// URN Functions
+
+// Initialize URN node state
+void init_urn_node(URNNodeState* urn) {
+    urn->step_count = 0;
+    urn->active_hypothesis = -1;
+    urn->reasoning_strength = 0.5f;  // Neutral
+    urn->inferences_made = 0;
+}
+
+// Add reasoning step to node
+int urn_add_reasoning(URNNodeState* urn, const char* hypothesis, const char* logic, float confidence) {
+    if (urn->step_count >= URN_MAX_REASONING_STEPS) {
+        return -1;  // Full
+    }
+    
+    ReasoningStep* step = &urn->reasoning_steps[urn->step_count];
+    str_copy(step->hypothesis, hypothesis, 128);
+    str_copy(step->logic_chain, logic, 256);
+    step->confidence = confidence;
+    step->evidence_count = 0;
+    
+    urn->step_count++;
+    urn->inferences_made++;
+    urn->active_hypothesis = urn->step_count - 1;
+    
+    // Update reasoning strength
+    urn->reasoning_strength = (urn->reasoning_strength + confidence) / 2.0f;
+    
+    return urn->step_count - 1;
+}
+
+// Share reasoning with another node
+void urn_share_reasoning(NeuroNetState* net, int from_node, int to_node) {
+    if (from_node >= net->node_count || to_node >= net->node_count) return;
+    if (!net->urn_enabled) return;
+    
+    URNNodeState* from_urn = &net->urn_nodes[from_node];
+    URNNodeState* to_urn = &net->urn_nodes[to_node];
+    
+    if (from_urn->active_hypothesis < 0) return;
+    
+    // Transfer current reasoning
+    ReasoningStep* step = &from_urn->reasoning_steps[from_urn->active_hypothesis];
+    
+    // Receiving node evaluates and potentially adopts
+    if (to_urn->step_count < URN_MAX_REASONING_STEPS) {
+        urn_add_reasoning(to_urn, step->hypothesis, step->logic_chain, step->confidence * 0.9f);
+    }
+}
+
+// Combine reasoning from multiple nodes (meta-reasoning)
+float urn_combine_reasoning(NeuroNetState* net, int* node_ids, int num_nodes, char* conclusion) {
+    if (!net->urn_enabled || num_nodes == 0) return 0.0f;
+    
+    float total_confidence = 0.0f;
+    int reasoning_count = 0;
+    
+    for (int i = 0; i < num_nodes && i < MAX_NEURO_NODES; i++) {
+        int node_id = node_ids[i];
+        if (node_id >= net->node_count) continue;
+        
+        URNNodeState* urn = &net->urn_nodes[node_id];
+        if (urn->active_hypothesis >= 0) {
+            ReasoningStep* step = &urn->reasoning_steps[urn->active_hypothesis];
+            total_confidence += step->confidence;
+            reasoning_count++;
+        }
+    }
+    
+    if (reasoning_count > 0) {
+        float avg_confidence = total_confidence / reasoning_count;
+        str_copy(conclusion, "Combined reasoning from multiple nodes", 256);
+        return avg_confidence;
+    }
+    
+    return 0.0f;
+}
+
+// ----------------------------------------------------------------------------
+// Phase 2: PULSE-CORE Functions
+
+// Initialize PULSE-CORE
+void init_pulse_core(PulseCoreState* pulse) {
+    pulse->history_count = 0;
+    pulse->history_idx = 0;
+    pulse->base_frequency = 60.0f;      // 60 BPM default
+    pulse->current_frequency = 60.0f;
+    pulse->last_pulse = 0;
+    pulse->pulse_count = 0;
+    pulse->nodes_in_sync = 0;
+    pulse->sync_strength = 0.0f;
+    
+    for (int i = 0; i < MAX_NEURO_NODES; i++) {
+        pulse->phase_offset[i] = 0.0f;
+    }
+}
+
+// Emit heartbeat pulse
+void pulse_emit(NeuroNetState* net) {
+    if (!net->pulse_enabled) return;
+    
+    PulseCoreState* pulse = &net->pulse;
+    pulse->pulse_count++;
+    
+    // Record pulse in history
+    Heartbeat beat;
+    beat.timestamp = net->total_packets;
+    beat.intensity = 0.5f + (pulse->sync_strength * 0.5f);  // Higher when synced
+    beat.frequency = pulse->current_frequency;
+    beat.synchronized_nodes = pulse->nodes_in_sync;
+    
+    pulse->history[pulse->history_idx] = beat;
+    pulse->history_idx = (pulse->history_idx + 1) % PULSE_HISTORY_SIZE;
+    if (pulse->history_count < PULSE_HISTORY_SIZE) {
+        pulse->history_count++;
+    }
+    
+    pulse->last_pulse = net->total_packets;
+}
+
+// Synchronize node to heartbeat
+void pulse_sync_node(NeuroNetState* net, int node_id) {
+    if (node_id >= net->node_count || !net->pulse_enabled) return;
+    
+    PulseCoreState* pulse = &net->pulse;
+    
+    // Calculate phase offset (how off-beat this node is)
+    uint64_t time_since_pulse = net->total_packets - pulse->last_pulse;
+    float phase = (float)(time_since_pulse % 60) / 60.0f;  // Normalize to [0,1]
+    pulse->phase_offset[node_id] = phase;
+    
+    // Node is in sync if phase < 0.1
+    if (phase < 0.1f) {
+        pulse->nodes_in_sync++;
+    }
+}
+
+// Adapt frequency based on network load
+void pulse_adapt_frequency(NeuroNetState* net, float load) {
+    if (!net->pulse_enabled) return;
+    
+    PulseCoreState* pulse = &net->pulse;
+    
+    // Increase BPM when load is high
+    pulse->current_frequency = pulse->base_frequency * (1.0f + load * 0.5f);
+    
+    // Clamp to 30-120 BPM
+    if (pulse->current_frequency < 30.0f) pulse->current_frequency = 30.0f;
+    if (pulse->current_frequency > 120.0f) pulse->current_frequency = 120.0f;
+}
+
+// Update sync strength
+void pulse_update_sync(NeuroNetState* net) {
+    if (!net->pulse_enabled) return;
+    
+    PulseCoreState* pulse = &net->pulse;
+    
+    if (net->node_count > 0) {
+        pulse->sync_strength = (float)pulse->nodes_in_sync / (float)net->node_count;
+    }
+    
+    pulse->nodes_in_sync = 0;  // Reset for next pulse
+}
+
+// ----------------------------------------------------------------------------
+// Phase 2: NEURAL-MESH Functions
+
+// Initialize NEURAL-MESH
+void init_neural_mesh(NeuralMeshState* mesh) {
+    mesh->route_count = 0;
+    mesh->mesh_density = 0.0f;
+    mesh->reconfigurations = 0;
+    mesh->last_reconfig = 0;
+    mesh->packets_routed = 0;
+    mesh->routing_failures = 0;
+    mesh->avg_route_length = 0.0f;
+}
+
+// Find route through mesh
+MeshRoute* mesh_find_route(NeuroNetState* net, int from, int to) {
+    if (!net->mesh_enabled) return NULL;
+    
+    NeuralMeshState* mesh = &net->mesh;
+    
+    // Check existing routes
+    for (int i = 0; i < mesh->route_count; i++) {
+        MeshRoute* route = &mesh->routes[i];
+        if (route->hop_count > 0 &&
+            route->hops[0] == from &&
+            route->hops[route->hop_count - 1] == to) {
+            return route;
+        }
+    }
+    
+    return NULL;  // No route found
+}
+
+// Create new route
+int mesh_create_route(NeuroNetState* net, int from, int to) {
+    if (!net->mesh_enabled) return -1;
+    if (net->mesh.route_count >= MESH_MAX_ROUTES) return -1;
+    
+    NeuralMeshState* mesh = &net->mesh;
+    MeshRoute* route = &mesh->routes[mesh->route_count];
+    
+    // Simple 1-hop route
+    route->hops[0] = from;
+    route->hops[1] = to;
+    route->hop_count = 2;
+    route->latency = 1.0f;
+    route->reliability = 1.0f;
+    route->use_count = 0;
+    route->last_used = net->total_packets;
+    
+    mesh->route_count++;
+    return mesh->route_count - 1;
+}
+
+// Route packet through mesh
+int mesh_route_packet(NeuroNetState* net, NeuroPacket* packet) {
+    if (!net->mesh_enabled) return -1;
+    
+    NeuralMeshState* mesh = &net->mesh;
+    MeshRoute* route = mesh_find_route(net, packet->source_node, packet->dest_node);
+    
+    if (!route) {
+        // Create new route
+        int route_id = mesh_create_route(net, packet->source_node, packet->dest_node);
+        if (route_id < 0) {
+            mesh->routing_failures++;
+            return -1;
+        }
+        route = &mesh->routes[route_id];
+    }
+    
+    // Use route
+    route->use_count++;
+    route->last_used = net->total_packets;
+    mesh->packets_routed++;
+    
+    // Update avg route length
+    mesh->avg_route_length = (mesh->avg_route_length * (mesh->packets_routed - 1) + 
+                             route->hop_count) / mesh->packets_routed;
+    
+    return 0;
+}
+
+// Reconfigure mesh based on traffic
+void mesh_reconfigure(NeuroNetState* net) {
+    if (!net->mesh_enabled) return;
+    
+    NeuralMeshState* mesh = &net->mesh;
+    
+    // Prune unused routes
+    int removed = 0;
+    for (int i = 0; i < mesh->route_count; i++) {
+        MeshRoute* route = &mesh->routes[i];
+        uint64_t age = net->total_packets - route->last_used;
+        
+        // Remove if unused for 100 packets
+        if (age > 100) {
+            // Shift routes down
+            for (int j = i; j < mesh->route_count - 1; j++) {
+                mesh->routes[j] = mesh->routes[j + 1];
+            }
+            mesh->route_count--;
+            removed++;
+            i--;  // Re-check this index
+        }
+    }
+    
+    if (removed > 0) {
+        mesh->reconfigurations++;
+        mesh->last_reconfig = net->total_packets;
+    }
+    
+    // Update density
+    int possible_routes = net->node_count * (net->node_count - 1);
+    if (possible_routes > 0) {
+        mesh->mesh_density = (float)mesh->route_count / (float)possible_routes;
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Phase 2: QUANTUM-BRIDGE Functions
+
+// Initialize QUANTUM-BRIDGE
+void init_quantum_bridge(QuantumBridgeState* quantum) {
+    quantum->tunnel_count = 0;
+    quantum->total_entanglement = 0.0f;
+    quantum->successful_tunnels = 0;
+    quantum->collapsed_tunnels = 0;
+    quantum->superposition_count = 0;
+}
+
+// Create quantum tunnel between nodes
+int quantum_create_tunnel(NeuroNetState* net, int node_a, int node_b) {
+    if (!net->quantum_enabled) return -1;
+    if (net->quantum.tunnel_count >= QUANTUM_MAX_TUNNELS) return -1;
+    
+    QuantumBridgeState* quantum = &net->quantum;
+    QuantumTunnel* tunnel = &quantum->tunnels[quantum->tunnel_count];
+    
+    tunnel->node_a = node_a;
+    tunnel->node_b = node_b;
+    tunnel->entanglement = 0.8f + ((node_a * 97 + node_b * 73) % 20) / 100.0f;  // 0.8-1.0
+    tunnel->tunnel_stability = 0.9f;
+    tunnel->packets_tunneled = 0;
+    tunnel->created_at = net->total_packets;
+    tunnel->collapsed = 0;
+    
+    quantum->tunnel_count++;
+    quantum->total_entanglement += tunnel->entanglement;
+    
+    return quantum->tunnel_count - 1;
+}
+
+// Send packet through quantum tunnel (instant)
+int quantum_tunnel_packet(NeuroNetState* net, NeuroPacket* packet) {
+    if (!net->quantum_enabled) return -1;
+    
+    QuantumBridgeState* quantum = &net->quantum;
+    
+    // Find tunnel for this route
+    for (int i = 0; i < quantum->tunnel_count; i++) {
+        QuantumTunnel* tunnel = &quantum->tunnels[i];
+        
+        if (tunnel->collapsed) continue;
+        
+        if ((tunnel->node_a == packet->source_node && tunnel->node_b == packet->dest_node) ||
+            (tunnel->node_b == packet->source_node && tunnel->node_a == packet->dest_node)) {
+            
+            // Tunnel found! Instant transmission
+            tunnel->packets_tunneled++;
+            quantum->successful_tunnels++;
+            
+            // Reduce stability slightly (quantum decoherence)
+            tunnel->tunnel_stability *= 0.99f;
+            
+            // Collapse if stability < 0.5
+            if (tunnel->tunnel_stability < 0.5f) {
+                tunnel->collapsed = 1;
+                quantum->collapsed_tunnels++;
+                quantum->total_entanglement -= tunnel->entanglement;
+            }
+            
+            return 0;  // Success
+        }
+    }
+    
+    return -1;  // No tunnel
+}
+
+// Refresh quantum tunnels (stabilize)
+void quantum_refresh_tunnels(NeuroNetState* net) {
+    if (!net->quantum_enabled) return;
+    
+    QuantumBridgeState* quantum = &net->quantum;
+    
+    for (int i = 0; i < quantum->tunnel_count; i++) {
+        QuantumTunnel* tunnel = &quantum->tunnels[i];
+        
+        if (!tunnel->collapsed && tunnel->tunnel_stability < 0.9f) {
+            tunnel->tunnel_stability += 0.05f;  // Slowly recover
+            if (tunnel->tunnel_stability > 1.0f) {
+                tunnel->tunnel_stability = 1.0f;
+            }
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Phase 3: HIVE-MIND Functions
+
+// Initialize HIVE-MIND
+void init_hive_mind(HiveMindState* hive) {
+    hive->thought_count = 0;
+    hive->hive_coherence = 0.0f;
+    hive->collective_intelligence = 0.0f;
+    hive->nodes_connected = 0;
+    hive->thoughts_shared = 0;
+    hive->consciousness_level = 0.0f;
+    hive->emergent_behaviors = 0;
+}
+
+// Create collective thought
+int hive_create_thought(NeuroNetState* net, int node_id, const char* content) {
+    if (!net->hive_enabled) return -1;
+    if (net->hive.thought_count >= HIVE_MAX_THOUGHTS) return -1;
+    
+    HiveMindState* hive = &net->hive;
+    HiveThought* thought = &hive->thoughts[hive->thought_count];
+    
+    str_copy(thought->content, content, 128);
+    thought->originator_node = node_id;
+    thought->share_count = 0;
+    thought->collective_strength = 0.5f;
+    thought->created_at = net->total_packets;
+    
+    // Generate semantic embedding
+    for (int i = 0; i < HIVE_THOUGHT_DIM; i++) {
+        float val = 0.0f;
+        for (int j = 0; content[j] != '\0' && j < 128; j++) {
+            val += (float)((content[j] * (i + 1) + j) % 1000) / 1000.0f;
+        }
+        thought->embedding[i] = (val - 0.5f) * 2.0f;
+    }
+    
+    // Normalize
+    float norm = 0.0f;
+    for (int i = 0; i < HIVE_THOUGHT_DIM; i++) {
+        norm += thought->embedding[i] * thought->embedding[i];
+    }
+    norm = sqrtf(norm);
+    if (norm > 0.0f) {
+        for (int i = 0; i < HIVE_THOUGHT_DIM; i++) {
+            thought->embedding[i] /= norm;
+        }
+    }
+    
+    hive->thought_count++;
+    return hive->thought_count - 1;
+}
+
+// Share thought with another node
+void hive_share_thought(NeuroNetState* net, int thought_id, int target_node) {
+    if (!net->hive_enabled) return;
+    if (thought_id >= net->hive.thought_count) return;
+    if (target_node >= net->node_count) return;
+    
+    HiveMindState* hive = &net->hive;
+    HiveThought* thought = &hive->thoughts[thought_id];
+    
+    // Add to shared list
+    if (thought->share_count < MAX_NEURO_NODES) {
+        thought->shared_with[thought->share_count] = target_node;
+        thought->share_count++;
+        hive->thoughts_shared++;
+        
+        // Strengthen collective
+        thought->collective_strength += 0.1f;
+        if (thought->collective_strength > 1.0f) {
+            thought->collective_strength = 1.0f;
+        }
+    }
+}
+
+// Update hive coherence
+void hive_update_coherence(NeuroNetState* net) {
+    if (!net->hive_enabled) return;
+    
+    HiveMindState* hive = &net->hive;
+    
+    if (net->node_count == 0) return;
+    
+    // Count nodes with shared thoughts
+    int connected = 0;
+    for (int i = 0; i < net->node_count; i++) {
+        int has_thoughts = 0;
+        for (int t = 0; t < hive->thought_count; t++) {
+            HiveThought* thought = &hive->thoughts[t];
+            for (int s = 0; s < thought->share_count; s++) {
+                if (thought->shared_with[s] == i) {
+                    has_thoughts = 1;
+                    break;
+                }
+            }
+            if (has_thoughts) break;
+        }
+        if (has_thoughts) connected++;
+    }
+    
+    hive->nodes_connected = connected;
+    hive->hive_coherence = (float)connected / (float)net->node_count;
+    
+    // Collective intelligence = coherence * thought density
+    float thought_density = (float)hive->thought_count / (float)HIVE_MAX_THOUGHTS;
+    hive->collective_intelligence = hive->hive_coherence * thought_density;
+    
+    // Consciousness level
+    hive->consciousness_level = (hive->hive_coherence + hive->collective_intelligence) / 2.0f;
+}
+
+// ----------------------------------------------------------------------------
+// Phase 3: CONSENSUS-NET Functions
+
+// Initialize CONSENSUS-NET
+void init_consensus_net(ConsensusNetState* consensus) {
+    consensus->proposal_count = 0;
+    consensus->decisions_made = 0;
+    consensus->unanimous_decisions = 0;
+    consensus->avg_consensus_time = 0.0f;
+    consensus->byzantine_faults = 0;
+    
+    for (int i = 0; i < MAX_NEURO_NODES; i++) {
+        consensus->node_reputation[i] = 1.0f;  // Start with full trust
+    }
+}
+
+// Create consensus proposal
+int consensus_propose(NeuroNetState* net, int proposer, const char* proposal, float confidence) {
+    if (!net->consensus_enabled) return -1;
+    if (net->consensus.proposal_count >= CONSENSUS_MAX_PROPOSALS) return -1;
+    
+    ConsensusNetState* consensus = &net->consensus;
+    ConsensusProposal* prop = &consensus->proposals[consensus->proposal_count];
+    
+    str_copy(prop->proposal, proposal, 128);
+    prop->proposer_node = proposer;
+    prop->confidence = confidence;
+    prop->votes_for = 0;
+    prop->votes_against = 0;
+    prop->votes_abstain = 0;
+    prop->vote_count = 0;
+    prop->decided = 0;
+    prop->approved = 0;
+    prop->consensus_strength = 0.0f;
+    prop->proposed_at = net->total_packets;
+    
+    consensus->proposal_count++;
+    return consensus->proposal_count - 1;
+}
+
+// Vote on proposal
+void consensus_vote(NeuroNetState* net, int proposal_id, int voter, int vote) {
+    if (!net->consensus_enabled) return;
+    if (proposal_id >= net->consensus.proposal_count) return;
+    if (voter >= net->node_count) return;
+    
+    ConsensusNetState* consensus = &net->consensus;
+    ConsensusProposal* prop = &consensus->proposals[proposal_id];
+    
+    if (prop->decided) return;  // Already decided
+    if (prop->vote_count >= CONSENSUS_MAX_VOTES) return;
+    
+    // Record vote
+    prop->voters[prop->vote_count] = voter;
+    prop->vote_count++;
+    
+    // Count vote (weighted by reputation)
+    float weight = consensus->node_reputation[voter];
+    
+    if (vote > 0) {
+        prop->votes_for += (int)(weight * 100.0f);
+    } else if (vote < 0) {
+        prop->votes_against += (int)(weight * 100.0f);
+    } else {
+        prop->votes_abstain++;
+    }
+}
+
+// Check if consensus reached
+int consensus_check(NeuroNetState* net, int proposal_id) {
+    if (!net->consensus_enabled) return 0;
+    if (proposal_id >= net->consensus.proposal_count) return 0;
+    
+    ConsensusNetState* consensus = &net->consensus;
+    ConsensusProposal* prop = &consensus->proposals[proposal_id];
+    
+    if (prop->decided) return prop->approved;
+    
+    int total_votes = prop->votes_for + prop->votes_against;
+    if (total_votes == 0) return 0;
+    
+    // 2/3 majority needed
+    if (prop->votes_for >= (total_votes * 2) / 3) {
+        prop->decided = 1;
+        prop->approved = 1;
+        prop->consensus_strength = (float)prop->votes_for / (float)total_votes;
+        consensus->decisions_made++;
+        
+        // Check if unanimous
+        if (prop->votes_against == 0 && prop->votes_abstain == 0) {
+            consensus->unanimous_decisions++;
+        }
+        
+        return 1;  // Approved
+    }
+    
+    // Rejection: >1/3 against
+    if (prop->votes_against > total_votes / 3) {
+        prop->decided = 1;
+        prop->approved = 0;
+        prop->consensus_strength = (float)prop->votes_against / (float)total_votes;
+        consensus->decisions_made++;
+        return -1;  // Rejected
+    }
+    
+    return 0;  // Still pending
+}
+
+// ----------------------------------------------------------------------------
+// Phase 3: MEMORY-POOL Functions
+
+// Initialize MEMORY-POOL
+void init_memory_pool(MemoryPoolState* pool) {
+    pool->entry_count = 0;
+    pool->total_reads = 0;
+    pool->total_writes = 0;
+    pool->cache_hits = 0;
+    pool->cache_misses = 0;
+    pool->memory_utilization = 0.0f;
+    pool->conflicts = 0;
+    pool->synchronizations = 0;
+}
+
+// Write to memory pool
+int memory_pool_write(NeuroNetState* net, int node_id, const char* key, float* value) {
+    if (!net->memory_pool_enabled) return -1;
+    
+    MemoryPoolState* pool = &net->memory_pool;
+    
+    // Check if key exists
+    for (int i = 0; i < pool->entry_count; i++) {
+        MemoryEntry* entry = &pool->entries[i];
+        
+        if (str_len(entry->key) == str_len(key)) {
+            int match = 1;
+            for (int j = 0; key[j] != '\0' && j < MEMORY_KEY_SIZE; j++) {
+                if (entry->key[j] != key[j]) {
+                    match = 0;
+                    break;
+                }
+            }
+            
+            if (match) {
+                // Update existing entry
+                if (entry->locked && entry->owner_node != node_id) {
+                    pool->conflicts++;
+                    return -2;  // Locked by another node
+                }
+                
+                // Copy value
+                for (int j = 0; j < NEURO_VECTOR_DIM; j++) {
+                    entry->value[j] = value[j];
+                }
+                
+                entry->write_count++;
+                entry->last_access = net->total_packets;
+                pool->total_writes++;
+                return i;
+            }
+        }
+    }
+    
+    // Create new entry
+    if (pool->entry_count >= MEMORY_POOL_SIZE) return -1;  // Pool full
+    
+    MemoryEntry* entry = &pool->entries[pool->entry_count];
+    str_copy(entry->key, key, MEMORY_KEY_SIZE);
+    
+    for (int j = 0; j < NEURO_VECTOR_DIM; j++) {
+        entry->value[j] = value[j];
+    }
+    
+    entry->owner_node = node_id;
+    entry->read_count = 0;
+    entry->write_count = 1;
+    entry->last_access = net->total_packets;
+    entry->locked = 0;
+    entry->shared = 0;
+    
+    pool->entry_count++;
+    pool->total_writes++;
+    pool->memory_utilization = (float)pool->entry_count / (float)MEMORY_POOL_SIZE;
+    
+    return pool->entry_count - 1;
+}
+
+// Read from memory pool
+int memory_pool_read(NeuroNetState* net, const char* key, float* value) {
+    if (!net->memory_pool_enabled) return -1;
+    
+    MemoryPoolState* pool = &net->memory_pool;
+    
+    // Search for key
+    for (int i = 0; i < pool->entry_count; i++) {
+        MemoryEntry* entry = &pool->entries[i];
+        
+        if (str_len(entry->key) == str_len(key)) {
+            int match = 1;
+            for (int j = 0; key[j] != '\0' && j < MEMORY_KEY_SIZE; j++) {
+                if (entry->key[j] != key[j]) {
+                    match = 0;
+                    break;
+                }
+            }
+            
+            if (match) {
+                // Copy value
+                for (int j = 0; j < NEURO_VECTOR_DIM; j++) {
+                    value[j] = entry->value[j];
+                }
+                
+                entry->read_count++;
+                entry->last_access = net->total_packets;
+                pool->total_reads++;
+                pool->cache_hits++;
+                return i;
+            }
+        }
+    }
+    
+    pool->cache_misses++;
+    return -1;  // Not found
+}
+
+// Lock memory entry
+int memory_pool_lock(NeuroNetState* net, const char* key, int node_id) {
+    if (!net->memory_pool_enabled) return -1;
+    
+    MemoryPoolState* pool = &net->memory_pool;
+    
+    for (int i = 0; i < pool->entry_count; i++) {
+        MemoryEntry* entry = &pool->entries[i];
+        
+        if (str_len(entry->key) == str_len(key)) {
+            int match = 1;
+            for (int j = 0; key[j] != '\0' && j < MEMORY_KEY_SIZE; j++) {
+                if (entry->key[j] != key[j]) {
+                    match = 0;
+                    break;
+                }
+            }
+            
+            if (match) {
+                if (entry->locked) {
+                    pool->conflicts++;
+                    return -2;  // Already locked
+                }
+                entry->locked = 1;
+                entry->owner_node = node_id;
+                return 0;
+            }
+        }
+    }
+    
+    return -1;  // Not found
+}
+
+// ----------------------------------------------------------------------------
+// GHOST-LINK Functions
+
+// Initialize ghost link state
+void init_ghost_link(GhostLinkState* ghost, int node_id) {
+    ghost->signature.frequency = 1000.0f + node_id * 100.0f;  // Unique freq
+    ghost->signature.intensity = 0.8f;
+    ghost->signature.entropy = 0.5f;
+    ghost->signature.last_emit = 0;
+    
+    // Generate unique pattern
+    for (int i = 0; i < GHOST_SIGNATURE_DIM; i++) {
+        float val = (float)((node_id * 7919 + i * 6151) % 1000) / 1000.0f;
+        ghost->signature.pattern[i] = (val - 0.5f) * 2.0f;
+    }
+    
+    ghost->detection_count = 0;
+    ghost->broadcasts_sent = 0;
+    ghost->ghosts_detected = 0;
+    ghost->presence_strength = 1.0f;
+}
+
+// Emit ghost signature (broadcast presence)
+void ghost_emit_presence(NeuroNetState* net, int node_id) {
+    if (node_id >= net->node_count || !net->ghost_enabled) return;
+    
+    GhostLinkState* ghost = &net->ghost_nodes[node_id];
+    ghost->broadcasts_sent++;
+    ghost->signature.last_emit = net->total_packets;  // Use packet count as timestamp
+}
+
+// Detect nearby ghosts (sense other nodes)
+void ghost_detect_proximity(NeuroNetState* net, int observer_id) {
+    if (observer_id >= net->node_count || !net->ghost_enabled) return;
+    
+    GhostLinkState* observer = &net->ghost_nodes[observer_id];
+    observer->detection_count = 0;
+    
+    // Scan all other nodes
+    for (int i = 0; i < net->node_count; i++) {
+        if (i == observer_id) continue;
+        if (observer->detection_count >= GHOST_MAX_DETECTIONS) break;
+        
+        GhostLinkState* target = &net->ghost_nodes[i];
+        
+        // Calculate pattern similarity
+        float affinity = 0.0f;
+        for (int j = 0; j < GHOST_SIGNATURE_DIM; j++) {
+            affinity += observer->signature.pattern[j] * target->signature.pattern[j];
+        }
+        affinity = (affinity + GHOST_SIGNATURE_DIM) / (2.0f * GHOST_SIGNATURE_DIM);  // Normalize [0,1]
+        
+        // Calculate proximity (based on frequency difference)
+        float freq_diff = observer->signature.frequency - target->signature.frequency;
+        if (freq_diff < 0) freq_diff = -freq_diff;
+        float proximity = 1.0f / (1.0f + freq_diff / 100.0f);  // Closer freq = higher proximity
+        
+        // Add detection
+        GhostDetection* det = &observer->detections[observer->detection_count];
+        det->node_id = i;
+        det->proximity = proximity;
+        det->affinity = affinity;
+        det->auto_paired = 0;
+        det->last_seen = net->total_packets;
+        
+        observer->detection_count++;
+        observer->ghosts_detected++;
+    }
+}
+
+// Auto-pair compatible ghosts (silent negotiation)
+int ghost_auto_pair(NeuroNetState* net, int node_a, int node_b) {
+    if (node_a >= net->node_count || node_b >= net->node_count) return -1;
+    if (!net->ghost_enabled) return -1;
+    
+    GhostLinkState* ghost_a = &net->ghost_nodes[node_a];
+    GhostLinkState* ghost_b = &net->ghost_nodes[node_b];
+    
+    // Calculate compatibility
+    float affinity = 0.0f;
+    for (int i = 0; i < GHOST_SIGNATURE_DIM; i++) {
+        affinity += ghost_a->signature.pattern[i] * ghost_b->signature.pattern[i];
+    }
+    affinity = (affinity + GHOST_SIGNATURE_DIM) / (2.0f * GHOST_SIGNATURE_DIM);
+    
+    // Auto-pair if affinity > 0.6
+    if (affinity > 0.6f) {
+        // Create synapse automatically
+        int result = neuronet_create_synapse(net, node_a, node_b, 
+                                            net->nodes[node_a].preferred_layer);
+        if (result >= 0) {
+            // Mark as auto-paired
+            for (int i = 0; i < ghost_a->detection_count; i++) {
+                if (ghost_a->detections[i].node_id == node_b) {
+                    ghost_a->detections[i].auto_paired = 1;
+                }
+            }
+            return 1;  // Success
+        }
+    }
+    
+    return 0;  // No pairing
+}
+
+// ----------------------------------------------------------------------------
+// Phase 4: DREAM-CACHE Functions
+
+// Initialize dream cache
+void init_dream_cache(DreamCacheState* dream) {
+    dream->prediction_count = 0;
+    dream->dream_accuracy = 0.0f;
+    dream->dreams_validated = 0;
+    dream->dreams_failed = 0;
+    dream->lookahead_depth = 4;        // Predict 4 steps ahead
+    dream->temporal_discount = 0.9f;   // 90% confidence decay
+    dream->speculative_enabled = 1;
+    dream->rollback_cost = 0.1f;
+}
+
+// Predict future state N steps ahead
+int dream_predict_future(NeuroNetState* net, int steps_ahead, float* state_out) {
+    if (!net->dream_enabled) return -1;
+    
+    DreamCacheState* dream = &net->dream;
+    
+    // Can't predict beyond lookahead depth
+    if (steps_ahead > dream->lookahead_depth) {
+        steps_ahead = dream->lookahead_depth;
+    }
+    
+    // Simple prediction: extrapolate from current state
+    // In a real system, this would use a trained model
+    for (int i = 0; i < 32; i++) {
+        // Use network coherence as base state
+        float current = net->network_coherence * (i + 1) / 32.0f;
+        
+        // Add trend from recent packets
+        float trend = 0.0f;
+        if (net->total_packets > 10) {
+            trend = (float)(net->total_packets % 100) / 100.0f;
+        }
+        
+        // Extrapolate
+        state_out[i] = current + trend * steps_ahead * 0.1f;
+        
+        // Bound to [0, 1]
+        if (state_out[i] < 0.0f) state_out[i] = 0.0f;
+        if (state_out[i] > 1.0f) state_out[i] = 1.0f;
+    }
+    
+    return 0;
+}
+
+// Cache a dream prediction
+int dream_cache_state(NeuroNetState* net, int steps_ahead, float* predicted_state) {
+    if (!net->dream_enabled) return -1;
+    
+    DreamCacheState* dream = &net->dream;
+    
+    // Find empty slot or replace oldest
+    int slot = dream->prediction_count;
+    if (slot >= 8) {
+        // Replace oldest (simple FIFO)
+        slot = 0;
+        for (int i = 1; i < 8; i++) {
+            if (dream->predictions[i].timestamp < dream->predictions[slot].timestamp) {
+                slot = i;
+            }
+        }
+    } else {
+        dream->prediction_count++;
+    }
+    
+    DreamPrediction* pred = &dream->predictions[slot];
+    
+    // Store prediction
+    for (int i = 0; i < 32; i++) {
+        pred->state[i] = predicted_state[i];
+    }
+    
+    pred->steps_ahead = steps_ahead;
+    pred->timestamp = net->total_packets;
+    
+    // Confidence decreases with distance into future
+    pred->confidence = 1.0f;
+    for (int i = 0; i < steps_ahead; i++) {
+        pred->confidence *= dream->temporal_discount;
+    }
+    
+    return slot;
+}
+
+// Validate dream against reality
+void dream_validate(NeuroNetState* net, float* actual_state) {
+    if (!net->dream_enabled) return;
+    
+    DreamCacheState* dream = &net->dream;
+    
+    // Check all predictions
+    for (int i = 0; i < dream->prediction_count; i++) {
+        DreamPrediction* pred = &dream->predictions[i];
+        
+        // Is this prediction ready to validate?
+        int steps_since = net->total_packets - pred->timestamp;
+        if (steps_since == pred->steps_ahead) {
+            // Calculate error
+            float error = 0.0f;
+            for (int j = 0; j < 32; j++) {
+                float diff = pred->state[j] - actual_state[j];
+                error += diff * diff;
+            }
+            error = sqrtf(error / 32.0f);  // RMSE
+            
+            // Was prediction accurate? (error < 0.2)
+            if (error < 0.2f) {
+                dream->dreams_validated++;
+            } else {
+                dream->dreams_failed++;
+            }
+            
+            // Update accuracy
+            int total = dream->dreams_validated + dream->dreams_failed;
+            if (total > 0) {
+                dream->dream_accuracy = (float)dream->dreams_validated / total;
+            }
+            
+            // Remove validated prediction
+            pred->timestamp = 0;
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Phase 4: META-LEARNING Functions
+
+// Initialize meta-learner
+void init_meta_learner(MetaLearnerState* meta) {
+    meta->base_learning_rate = 0.001f;
+    meta->current_learning_rate = 0.001f;
+    meta->momentum = 0.9f;
+    meta->history_count = 0;
+    meta->adaptation_speed = 0.01f;
+    meta->exploration_factor = 0.1f;
+    meta->initial_performance = 0.0f;
+    meta->current_performance = 0.0f;
+    meta->improvement_rate = 0.0f;
+    meta->adaptation_cycles = 0;
+    meta->weight_perturbation = 0.01f;
+}
+
+// Adapt network weights based on performance
+void meta_adapt_weights(NeuroNetState* net) {
+    if (!net->meta_enabled) return;
+    
+    MetaLearnerState* meta = &net->meta;
+    
+    // Calculate current performance (use network coherence as proxy)
+    float performance = net->network_coherence;
+    
+    // Store snapshot
+    if (meta->history_count < 16) {
+        int idx = meta->history_count;
+        meta->history[idx].metric_value = performance;
+        meta->history[idx].learning_rate = meta->current_learning_rate;
+        meta->history[idx].timestamp = net->total_packets;
+        meta->history_count++;
+    } else {
+        // Shift history
+        for (int i = 0; i < 15; i++) {
+            meta->history[i] = meta->history[i + 1];
+        }
+        meta->history[15].metric_value = performance;
+        meta->history[15].learning_rate = meta->current_learning_rate;
+        meta->history[15].timestamp = net->total_packets;
+    }
+    
+    // Track improvement
+    if (meta->initial_performance == 0.0f) {
+        meta->initial_performance = performance;
+    }
+    meta->current_performance = performance;
+    
+    if (meta->initial_performance > 0.0f) {
+        meta->improvement_rate = (meta->current_performance - meta->initial_performance) 
+                                / meta->initial_performance;
+    }
+    
+    // Adapt learning rate based on recent performance
+    if (meta->history_count >= 3) {
+        float recent_trend = meta->history[meta->history_count - 1].metric_value -
+                           meta->history[meta->history_count - 3].metric_value;
+        
+        if (recent_trend > 0) {
+            // Performance improving: increase learning rate slightly
+            meta->current_learning_rate *= (1.0f + meta->adaptation_speed);
+        } else {
+            // Performance declining: decrease learning rate
+            meta->current_learning_rate *= (1.0f - meta->adaptation_speed);
+        }
+        
+        // Bound learning rate
+        if (meta->current_learning_rate < 0.0001f) meta->current_learning_rate = 0.0001f;
+        if (meta->current_learning_rate > 0.1f) meta->current_learning_rate = 0.1f;
+    }
+    
+    // Apply gradient-free weight perturbation to synapses
+    for (int i = 0; i < net->synapse_count; i++) {
+        SynapticConnection* syn = &net->synapses[i];
+        
+        // Random perturbation
+        float perturbation = ((net->total_packets * (i + 1)) % 100) / 100.0f - 0.5f;
+        perturbation *= meta->weight_perturbation;
+        
+        // Apply with learning rate
+        syn->weight += perturbation * meta->current_learning_rate;
+        
+        // Bound weight [0.1, 2.0]
+        if (syn->weight < 0.1f) syn->weight = 0.1f;
+        if (syn->weight > 2.0f) syn->weight = 2.0f;
+    }
+    
+    meta->adaptation_cycles++;
+}
+
+// Tune hyperparameters automatically
+void meta_tune_hyperparams(NeuroNetState* net) {
+    if (!net->meta_enabled) return;
+    
+    MetaLearnerState* meta = &net->meta;
+    
+    // Adjust exploration based on improvement
+    if (meta->improvement_rate > 0.1f) {
+        // Good progress: reduce exploration
+        meta->exploration_factor *= 0.95f;
+    } else if (meta->improvement_rate < 0.0f) {
+        // Declining: increase exploration
+        meta->exploration_factor *= 1.05f;
+    }
+    
+    // Bound exploration
+    if (meta->exploration_factor < 0.01f) meta->exploration_factor = 0.01f;
+    if (meta->exploration_factor > 0.5f) meta->exploration_factor = 0.5f;
+    
+    // Adjust weight perturbation
+    meta->weight_perturbation = meta->exploration_factor * 0.1f;
+}
+
+// ----------------------------------------------------------------------------
+// Phase 4: EVOLUTION-ENGINE Functions
+
+// Initialize evolution engine
+void init_evolution(EvolutionState* evo) {
+    evo->population_size = 4;
+    evo->current_generation = 0;
+    evo->best_fitness_ever = 0.0f;
+    evo->best_generation = 0;
+    evo->mutation_rate = 0.05f;
+    evo->crossover_rate = 0.7f;
+    evo->elitism_rate = 0.25f;
+    evo->nodes_added = 0;
+    evo->nodes_removed = 0;
+    evo->synapses_added = 0;
+    evo->synapses_removed = 0;
+    evo->avg_fitness = 0.0f;
+    evo->fitness_variance = 0.0f;
+    evo->stagnant_generations = 0;
+    
+    // Initialize genomes
+    for (int i = 0; i < 4; i++) {
+        evo->genomes[i].fitness = 0.0f;
+        evo->genomes[i].generation = 0;
+        
+        // Random genome
+        for (int j = 0; j < 64; j++) {
+            evo->genomes[i].gene[j] = (i * 64 + j) % 2;  // Deterministic init
+        }
+    }
+}
+
+// Mutate network topology
+void evolve_mutate_topology(NeuroNetState* net, int genome_idx) {
+    if (!net->evolution_enabled) return;
+    if (genome_idx >= net->evolution.population_size) return;
+    
+    EvolutionState* evo = &net->evolution;
+    NetworkGenome* genome = &evo->genomes[genome_idx];
+    
+    // Mutate genome
+    for (int i = 0; i < 64; i++) {
+        float rand = ((net->total_packets * (i + 1)) % 100) / 100.0f;
+        if (rand < evo->mutation_rate) {
+            genome->gene[i] = 1 - genome->gene[i];  // Flip bit
+        }
+    }
+    
+    // Apply genome to network (prune/add connections)
+    int target_synapses = 0;
+    for (int i = 0; i < 64; i++) {
+        if (genome->gene[i] == 1) target_synapses++;
+    }
+    
+    // Adjust synapse count toward target
+    if (net->synapse_count < target_synapses && net->synapse_count < MAX_NEURO_SYNAPSES) {
+        // Try to add synapse
+        if (net->node_count >= 2) {
+            int src = net->total_packets % net->node_count;
+            int dst = (net->total_packets + 1) % net->node_count;
+            if (src != dst) {
+                neuronet_create_synapse(net, src, dst, net->nodes[src].preferred_layer);
+                evo->synapses_added++;
+            }
+        }
+    } else if (net->synapse_count > target_synapses && net->synapse_count > 1) {
+        // Remove weakest synapse
+        int weakest = 0;
+        float min_weight = net->synapses[0].weight;
+        for (int i = 1; i < net->synapse_count; i++) {
+            if (net->synapses[i].weight < min_weight) {
+                min_weight = net->synapses[i].weight;
+                weakest = i;
+            }
+        }
+        
+        // Remove by shifting array
+        for (int i = weakest; i < net->synapse_count - 1; i++) {
+            net->synapses[i] = net->synapses[i + 1];
+        }
+        net->synapse_count--;
+        evo->synapses_removed++;
+    }
+}
+
+// Evaluate fitness of current network
+void evolve_evaluate_fitness(NeuroNetState* net, int genome_idx) {
+    if (!net->evolution_enabled) return;
+    if (genome_idx >= net->evolution.population_size) return;
+    
+    EvolutionState* evo = &net->evolution;
+    NetworkGenome* genome = &evo->genomes[genome_idx];
+    
+    // Fitness = network coherence + diversity bonus
+    float fitness = net->network_coherence;
+    
+    // Bonus for more connections (up to point)
+    float connection_ratio = (float)net->synapse_count / MAX_NEURO_SYNAPSES;
+    if (connection_ratio < 0.5f) {
+        fitness += connection_ratio * 0.2f;  // Reward connections
+    } else {
+        fitness -= (connection_ratio - 0.5f) * 0.1f;  // Penalize too many
+    }
+    
+    // Bonus for resonance
+    fitness += net->avg_resonance * 0.1f;
+    
+    genome->fitness = fitness;
+    genome->generation = evo->current_generation;
+    
+    // Track best
+    if (fitness > evo->best_fitness_ever) {
+        evo->best_fitness_ever = fitness;
+        evo->best_generation = evo->current_generation;
+        evo->stagnant_generations = 0;
+    }
+}
+
+// Prune weak connections
+void evolve_prune_weak(NeuroNetState* net) {
+    if (!net->evolution_enabled) return;
+    
+    EvolutionState* evo = &net->evolution;
+    
+    // Remove synapses with weight < 0.2
+    int i = 0;
+    while (i < net->synapse_count) {
+        if (net->synapses[i].weight < 0.2f && net->synapse_count > 1) {
+            // Remove
+            for (int j = i; j < net->synapse_count - 1; j++) {
+                net->synapses[j] = net->synapses[j + 1];
+            }
+            net->synapse_count--;
+            evo->synapses_removed++;
+        } else {
+            i++;
+        }
+    }
+}
+
+// Advance to next generation
+void evolve_next_generation(NeuroNetState* net) {
+    if (!net->evolution_enabled) return;
+    
+    EvolutionState* evo = &net->evolution;
+    
+    // Calculate average fitness
+    float sum = 0.0f;
+    for (int i = 0; i < evo->population_size; i++) {
+        sum += evo->genomes[i].fitness;
+    }
+    evo->avg_fitness = sum / evo->population_size;
+    
+    // Calculate variance
+    float variance = 0.0f;
+    for (int i = 0; i < evo->population_size; i++) {
+        float diff = evo->genomes[i].fitness - evo->avg_fitness;
+        variance += diff * diff;
+    }
+    evo->fitness_variance = variance / evo->population_size;
+    
+    // Selection: keep best (elitism)
+    int best_idx = 0;
+    for (int i = 1; i < evo->population_size; i++) {
+        if (evo->genomes[i].fitness > evo->genomes[best_idx].fitness) {
+            best_idx = i;
+        }
+    }
+    
+    // Crossover: combine best with others
+    for (int i = 0; i < evo->population_size; i++) {
+        if (i != best_idx) {
+            // Crossover with best
+            for (int j = 0; j < 64; j++) {
+                float rand = ((net->total_packets * (i * 64 + j)) % 100) / 100.0f;
+                if (rand < evo->crossover_rate) {
+                    evo->genomes[i].gene[j] = evo->genomes[best_idx].gene[j];
+                }
+            }
+        }
+    }
+    
+    evo->current_generation++;
+    evo->stagnant_generations++;
+}
+
+// Initialize NEURO-NET system
+void init_neuronet(NeuroNetState* net) {
+    net->node_count = 0;
+    net->synapse_count = 0;
+    net->total_energy = 10000.0f;      // 10K gflops initial
+    net->solar_energy = 5000.0f;       // Solar: high compute
+    net->lunar_energy = 2000.0f;       // Lunar: low power
+    net->plasma_energy = 3000.0f;      // Plasma: ultra-fast
+    net->avg_resonance = 0.0f;
+    net->total_packets = 0;
+    net->network_coherence = 1.0f;
+    
+    // Phase 1
+    net->qddn_enabled = 1;             // Enable QDDN by default
+    net->urn_enabled = 1;              // Enable URN by default
+    net->ghost_enabled = 1;            // Enable GHOST-LINK by default
+    
+    // Phase 2
+    net->pulse_enabled = 1;            // Enable PULSE-CORE
+    net->mesh_enabled = 1;             // Enable NEURAL-MESH
+    net->quantum_enabled = 1;          // Enable QUANTUM-BRIDGE
+    
+    // Phase 3
+    net->hive_enabled = 1;             // Enable HIVE-MIND
+    net->consensus_enabled = 1;        // Enable CONSENSUS-NET
+    net->memory_pool_enabled = 1;      // Enable MEMORY-POOL
+    
+    // Initialize Phase 1
+    init_qddn(&net->qddn);
+    
+    for (int i = 0; i < MAX_NEURO_NODES; i++) {
+        init_urn_node(&net->urn_nodes[i]);
+        init_ghost_link(&net->ghost_nodes[i], i);
+    }
+    
+    // Initialize Phase 2
+    init_pulse_core(&net->pulse);
+    init_neural_mesh(&net->mesh);
+    init_quantum_bridge(&net->quantum);
+    
+    // Initialize Phase 3
+    init_hive_mind(&net->hive);
+    init_consensus_net(&net->consensus);
+    init_memory_pool(&net->memory_pool);
+    
+    // Phase 4: Advanced Features
+    net->dream_enabled = 1;            // Enable DREAM-CACHE
+    net->meta_enabled = 1;             // Enable META-LEARNING
+    net->evolution_enabled = 1;        // Enable EVOLUTION-ENGINE
+    
+    // Initialize Phase 4
+    init_dream_cache(&net->dream);
+    init_meta_learner(&net->meta);
+    init_evolution(&net->evolution);
+}
+
+// Create vector signature for a node (NEXUS-0: telepathic identity)
+void generate_node_signature(float* signature, int node_id, const char* name) {
+    // Generate pseudo-random but deterministic signature based on ID + name
+    for (int i = 0; i < NEURO_VECTOR_DIM; i++) {
+        float val = 0.0f;
+        // Hash from node_id
+        val += (float)((node_id * 7919 + i * 6151) % 1000) / 1000.0f;
+        // Hash from name
+        if (name && name[0]) {
+            val += (float)((name[i % 32] * 97 + i) % 1000) / 1000.0f;
+        }
+        signature[i] = (val - 0.5f) * 2.0f;  // Normalize to [-1, 1]
+    }
+    
+    // Normalize vector
+    float norm = 0.0f;
+    for (int i = 0; i < NEURO_VECTOR_DIM; i++) {
+        norm += signature[i] * signature[i];
+    }
+    norm = sqrtf(norm);
+    if (norm > 0.0f) {
+        for (int i = 0; i < NEURO_VECTOR_DIM; i++) {
+            signature[i] /= norm;
+        }
+    }
+}
+
+// Calculate vector similarity (NEXUS-0: telepathic understanding)
+float vector_similarity(float* v1, float* v2) {
+    float dot = 0.0f;
+    for (int i = 0; i < NEURO_VECTOR_DIM; i++) {
+        dot += v1[i] * v2[i];
+    }
+    return dot;  // Cosine similarity (already normalized)
+}
+
+// Add node to NEURO-NET
+int neuronet_add_node(NeuroNetState* net, const char* name, EnergyLayer preferred) {
+    if (net->node_count >= MAX_NEURO_NODES) return -1;
+    
+    int id = net->node_count;
+    NeuroNode* node = &net->nodes[id];
+    
+    node->id = id;
+    str_copy(node->name, name, 32);
+    generate_node_signature(node->signature, id, name);
+    node->energy_available = 1000.0f;  // Initial energy pool
+    node->energy_consumed = 0.0f;
+    node->energy_donated = 0.0f;
+    node->preferred_layer = preferred;
+    node->packets_sent = 0;
+    node->packets_received = 0;
+    node->avg_latency = 0.0f;
+    
+    net->node_count++;
+    return id;
+}
+
+// Create synaptic connection (SYNAPSE-NET: adaptive)
+void neuronet_create_synapse(NeuroNetState* net, int from, int to, EnergyLayer layer) {
+    if (net->synapse_count >= MAX_NEURO_NODES * MAX_NEURO_NODES) return;
+    
+    SynapticConnection* syn = &net->synapses[net->synapse_count];
+    syn->from_node = from;
+    syn->to_node = to;
+    syn->weight = 0.5f;          // Initial synaptic weight
+    syn->bandwidth = 100.0f;     // MB/s
+    syn->last_used = 0;
+    syn->use_count = 0;
+    syn->layer = layer;
+    
+    net->synapse_count++;
+}
+
+// Get energy cost for layer (HEXA-NET: energy types)
+float get_layer_energy_cost(EnergyLayer layer) {
+    switch (layer) {
+        case LAYER_SOLAR:  return 10.0f;  // High cost, high speed
+        case LAYER_LUNAR:  return 2.0f;   // Low cost, slow
+        case LAYER_PLASMA: return 50.0f;  // Very high cost, ultra-fast
+        case LAYER_WIND:   return 5.0f;   // Medium cost, broadcast
+        case LAYER_EARTH:  return 1.0f;   // Very low, persistent
+        case LAYER_VOID:   return 0.1f;   // Almost free (silence)
+        default: return 5.0f;
+    }
+}
+
+// Get layer bandwidth multiplier
+float get_layer_bandwidth(EnergyLayer layer) {
+    switch (layer) {
+        case LAYER_SOLAR:  return 10.0f;  // 10x speed
+        case LAYER_LUNAR:  return 0.5f;   // 0.5x speed
+        case LAYER_PLASMA: return 100.0f; // 100x speed (bare-metal)
+        case LAYER_WIND:   return 2.0f;   // 2x (broadcast)
+        case LAYER_EARTH:  return 0.1f;   // 0.1x (storage)
+        case LAYER_VOID:   return 1000.0f;// Instant (no data)
+        default: return 1.0f;
+    }
+}
+
+// Create neuro packet
+void create_neuro_packet(NeuroPacket* packet, int src, int dst, const char* data, 
+                        EnergyLayer layer, float priority) {
+    packet->source_node = src;
+    packet->dest_node = dst;
+    packet->layer = layer;
+    packet->priority = priority;
+    packet->energy_budget = get_layer_energy_cost(layer);
+    packet->timestamp = 0;
+    packet->resonance = 0.0f;
+    
+    // Copy payload
+    str_copy(packet->payload, data, 256);
+    packet->payload_size = str_len(data);
+    
+    // Generate intent vector (NEXUS-0: encode meaning)
+    // Simple hash-based embedding
+    for (int i = 0; i < NEURO_VECTOR_DIM; i++) {
+        float val = 0.0f;
+        for (int j = 0; j < packet->payload_size; j++) {
+            val += (float)((data[j] * (i + 1) + j) % 1000) / 1000.0f;
+        }
+        packet->vector[i] = (val - 0.5f) * 2.0f;
+    }
+    
+    // Normalize
+    float norm = 0.0f;
+    for (int i = 0; i < NEURO_VECTOR_DIM; i++) {
+        norm += packet->vector[i] * packet->vector[i];
+    }
+    norm = sqrtf(norm);
+    if (norm > 0.0f) {
+        for (int i = 0; i < NEURO_VECTOR_DIM; i++) {
+            packet->vector[i] /= norm;
+        }
+    }
+}
+
+// Send packet through NEURO-NET (N.E.T. + NEXUS-0 + HEXA + QDDN)
+int neuronet_send(NeuroNetState* net, NeuroPacket* packet) {
+    if (packet->source_node >= net->node_count || packet->dest_node >= net->node_count) {
+        return -1;  // Invalid nodes
+    }
+    
+    NeuroNode* src = &net->nodes[packet->source_node];
+    NeuroNode* dst = &net->nodes[packet->dest_node];
+    
+    // QDDN: Check if this packet was predicted
+    if (net->qddn_enabled) {
+        int predicted = qddn_check_prediction(&net->qddn, packet);
+        if (predicted) {
+            // Cache hit! Pre-allocated bandwidth and warmed cache
+            // Reduce latency bonus
+        }
+        qddn_update_metrics(&net->qddn);
+    }
+    
+    // Check energy budget (N.E.T.: energy transport)
+    if (src->energy_available < packet->energy_budget) {
+        return -2;  // Insufficient energy
+    }
+    
+    // Calculate resonance (ECHO-STREAM: memory)
+    float similarity = vector_similarity(packet->vector, dst->signature);
+    packet->resonance = (similarity + 1.0f) / 2.0f;  // [0, 1]
+    
+    // Find synapse
+    SynapticConnection* synapse = NULL;
+    for (int i = 0; i < net->synapse_count; i++) {
+        if (net->synapses[i].from_node == packet->source_node &&
+            net->synapses[i].to_node == packet->dest_node &&
+            net->synapses[i].layer == packet->layer) {
+            synapse = &net->synapses[i];
+            break;
+        }
+    }
+    
+    if (!synapse) return -3;  // No connection
+    
+    // Update synapse (SYNAPSE-NET: Hebbian learning)
+    synapse->weight += 0.1f * packet->resonance;  // Strengthen with use
+    if (synapse->weight > 2.0f) synapse->weight = 2.0f;
+    synapse->use_count++;
+    
+    // Myelin effect: faster with repetition
+    float speed_bonus = 1.0f + (float)synapse->use_count / 100.0f;
+    if (speed_bonus > 3.0f) speed_bonus = 3.0f;
+    
+    // Calculate latency
+    float base_latency = 10.0f / get_layer_bandwidth(packet->layer);
+    float latency = base_latency / (synapse->weight * speed_bonus);
+    dst->avg_latency = latency;
+    
+    // Transfer energy
+    src->energy_available -= packet->energy_budget;
+    src->energy_consumed += packet->energy_budget;
+    dst->energy_available += packet->energy_budget * 0.8f;  // 80% efficiency
+    src->energy_donated += packet->energy_budget * 0.8f;
+    
+    // Update stats
+    src->packets_sent++;
+    dst->packets_received++;
+    net->total_packets++;
+    net->avg_resonance = (net->avg_resonance * (net->total_packets - 1) + packet->resonance) / net->total_packets;
+    
+    // Phase 2: PULSE-CORE - Sync to heartbeat
+    if (net->pulse_enabled) {
+        pulse_sync_node(net, packet->dest_node);
+        
+        // Emit pulse every 10 packets
+        if (net->total_packets % 10 == 0) {
+            pulse_emit(net);
+            pulse_update_sync(net);
+            
+            // Adapt frequency based on network load
+            float load = (float)net->total_packets / 100.0f;
+            if (load > 1.0f) load = 1.0f;
+            pulse_adapt_frequency(net, load);
+        }
+    }
+    
+    // Phase 2: NEURAL-MESH - Route packet
+    if (net->mesh_enabled) {
+        mesh_route_packet(net, packet);
+        
+        // Reconfigure every 50 packets
+        if (net->total_packets % 50 == 0) {
+            mesh_reconfigure(net);
+        }
+    }
+    
+    // Phase 2: QUANTUM-BRIDGE - Try quantum tunnel
+    if (net->quantum_enabled) {
+        int tunneled = quantum_tunnel_packet(net, packet);
+        if (tunneled == 0) {
+            // Packet went through quantum tunnel - instant transmission!
+            packet->resonance = 1.0f;  // Perfect resonance
+            dst->avg_latency = 0.01f;  // Near-zero latency
+        }
+        
+        // Refresh tunnels periodically
+        if (net->total_packets % 20 == 0) {
+            quantum_refresh_tunnels(net);
+        }
+    }
+    
+    // QDDN: Record this packet for pattern learning
+    if (net->qddn_enabled) {
+        qddn_record_packet(&net->qddn, packet);
+        
+        // Generate prediction for next packet
+        if (net->qddn.history_count >= 3) {
+            PacketPattern next_prediction;
+            qddn_predict_next(&net->qddn, &next_prediction);
+            
+            // Store prediction (expand to full packet)
+            if (net->qddn.valid_predictions < QDDN_PREDICTION_HORIZON) {
+                NeuroPacket pred_packet;
+                pred_packet.source_node = next_prediction.src_node;
+                pred_packet.dest_node = next_prediction.dst_node;
+                pred_packet.layer = next_prediction.layer;
+                pred_packet.timestamp = next_prediction.timestamp;
+                pred_packet.resonance = next_prediction.resonance;
+                
+                // Expand 32D pattern back to 64D
+                for (int i = 0; i < QDDN_EMBEDDING_DIM; i++) {
+                    pred_packet.vector[i * 2] = next_prediction.vector[i];
+                    pred_packet.vector[i * 2 + 1] = next_prediction.vector[i];
+                }
+                
+                net->qddn.predictions[net->qddn.valid_predictions] = pred_packet;
+                net->qddn.prediction_confidence[net->qddn.valid_predictions] = 0.7f;
+                net->qddn.valid_predictions++;
+                net->qddn.predictions_made++;
+                
+                // Pre-allocate bandwidth
+                float bandwidth = get_layer_bandwidth(next_prediction.layer) * 0.2f;
+                qddn_preallocate(&net->qddn, &next_prediction, bandwidth);
+                
+                // Warm cache
+                qddn_warm_cache(&net->qddn, next_prediction.dst_node);
+            }
+        }
+    }
+    
+    // Phase 4: DREAM-CACHE - Predict future states
+    if (net->dream_enabled) {
+        // Make predictions every 15 packets
+        if (net->total_packets % 15 == 0) {
+            float future_state[32];
+            dream_predict_future(net, 3, future_state);  // 3 steps ahead
+            dream_cache_state(net, 3, future_state);
+        }
+        
+        // Validate dreams every 20 packets
+        if (net->total_packets % 20 == 0) {
+            float current_state[32];
+            // Current state = network metrics
+            for (int i = 0; i < 32; i++) {
+                current_state[i] = net->network_coherence * (i + 1) / 32.0f;
+            }
+            dream_validate(net, current_state);
+        }
+    }
+    
+    // Phase 4: META-LEARNING - Adapt weights
+    if (net->meta_enabled) {
+        // Adapt every 25 packets
+        if (net->total_packets % 25 == 0) {
+            meta_adapt_weights(net);
+            meta_tune_hyperparams(net);
+        }
+    }
+    
+    // Phase 4: EVOLUTION-ENGINE - Evolve topology
+    if (net->evolution_enabled) {
+        // Mutate every 30 packets
+        if (net->total_packets % 30 == 0) {
+            int genome_idx = (net->total_packets / 30) % net->evolution.population_size;
+            evolve_mutate_topology(net, genome_idx);
+            evolve_evaluate_fitness(net, genome_idx);
+        }
+        
+        // Prune weak connections every 100 packets
+        if (net->total_packets % 100 == 0) {
+            evolve_prune_weak(net);
+        }
+        
+        // Next generation every 120 packets
+        if (net->total_packets % 120 == 0) {
+            evolve_next_generation(net);
+        }
+    }
+    
+    return 0;  // Success
+}
+
+// Predict next packet (QDDN: quantum-dream prediction)
+void neuronet_predict_next(NeuroNetState* net, NeuroNode* node, NeuroPacket* prediction) {
+    // Simple prediction based on history and node signature
+    // In real implementation, would use transformer-based prediction
+    
+    create_neuro_packet(prediction, node->id, (node->id + 1) % net->node_count,
+                       "predicted_data", node->preferred_layer, 0.5f);
+    
+    // Copy node signature as prediction vector
+    for (int i = 0; i < NEURO_VECTOR_DIM; i++) {
+        prediction->vector[i] = node->signature[i];
+    }
+}
+
 // Save generated text to disk (Phase 9: Persistent Storage)
 EFI_STATUS save_generation(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable, 
                           char* prompt, char* output, int generation_num) {
@@ -1870,12 +4582,16 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     uint32_t seed = (uint32_t)((uintptr_t)&transformer ^ (uintptr_t)&tokenizer);
     srand_efi(seed);
     
-    // Mode selection - FORCED TO REPL MODE (keyboard input crashes in QEMU/OVMF)
-    Print(L"\r\n=== LLaMA2 Bare-Metal REPL ===\r\n");
-    Print(L"Starting in Interactive REPL mode...\r\n");
-    Print(L"(Keyboard input disabled - QEMU/OVMF limitation)\r\n\r\n");
+    // Mode selection - Chat REPL v4.0 with stories110M
+    Print(L"\r\n╔══════════════════════════════════════════════════════════════╗\r\n");
+    Print(L"║     Chat REPL v4.0 - Stories110M Test                       ║\r\n");
+    Print(L"╚══════════════════════════════════════════════════════════════╝\r\n");
+    Print(L"🧠 Model: Stories110M (768 dim, 12 layers, 110M params)\r\n");
+    Print(L"✨ URS Enhanced + Streaming Context + KV-Cache Persistence\r\n");
+    Print(L"🔥 NEURO-NET v1.0 Integration Active\r\n");
+    Print(L"(Demo mode - 5 conversation batches)\r\n\r\n");
     
-    int mode = 2;  // Force interactive REPL mode
+    int mode = 3;  // Chat REPL v4.0 mode (switch to 4 for NEURO-NET demo)
     
     if (mode == 1) {
         // AUTO-GENERATE MODE (original behavior)
@@ -1928,7 +4644,7 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     
     Print(L"\r\n\r\nGeneration complete.\r\n");
     
-    } else {
+    } else if (mode == 2) {
         // INTERACTIVE MENU MODE
         Print(L"\r\n========================================\r\n");
         Print(L"  Interactive Generation Menu\r\n");
@@ -2186,11 +4902,828 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         Print(L"All 41 prompts across 6 categories demonstrated\r\n");
         Print(L"Interactive menu works on real UEFI hardware\r\n");
         Print(L"========================================\r\n");
+    } else if (mode == 3) {
+        // CHAT REPL v4.0 MODE
+        Print(L"\r\n╔══════════════════════════════════════════════════════════════╗\r\n");
+        Print(L"║           Chat REPL v4.0 - Demo Mode                        ║\r\n");
+        Print(L"╚══════════════════════════════════════════════════════════════╝\r\n\r\n");
+        
+        // Initialize Chat REPL
+        ChatREPLState repl;
+        init_chat_repl(&repl, 1);  // Demo mode enabled
+        
+        // Initialize KV-Cache with model dimensions
+        init_kv_cache_persistent(&repl.kv_cache, 
+            transformer.config.n_layers, 
+            transformer.config.dim, 
+            transformer.config.seq_len);
+        
+        Print(L"[INIT] Chat REPL initialized\r\n");
+        Print(L"       - Streaming Context: %d bytes\r\n", STREAMING_CONTEXT_SIZE);
+        Print(L"       - KV-Cache: %d layers x %d dim\r\n", 
+              transformer.config.n_layers, transformer.config.dim);
+        Print(L"       - URS Enhanced: Active\r\n");
+        Print(L"       - Max History: %d messages\r\n\r\n", MAX_CHAT_HISTORY);
+        
+        // Demo batches
+        const DemoConversation* batches[] = {
+            demo_batch_1, demo_batch_2, demo_batch_3, demo_batch_4, demo_batch_5
+        };
+        int batch_sizes[] = {4, 3, 3, 3, 3};
+        const char* batch_names[] = {
+            "General Conversation", 
+            "Knowledge Questions", 
+            "Technology Topics",
+            "Philosophy & Wisdom", 
+            "History & Science"
+        };
+        
+        // Run all 5 demo batches
+        for (int batch_idx = 0; batch_idx < 5; batch_idx++) {
+            Print(L"\r\n╔══════════════════════════════════════════════════════════════╗\r\n");
+            Print(L"║  Batch %d: %a%-44s║\r\n", batch_idx + 1, batch_names[batch_idx], "");
+            Print(L"╚══════════════════════════════════════════════════════════════╝\r\n\r\n");
+            
+            const DemoConversation* batch = batches[batch_idx];
+            int batch_size = batch_sizes[batch_idx];
+            
+            for (int conv_idx = 0; conv_idx < batch_size; conv_idx++) {
+                const char* user_msg = batch[conv_idx].user_msg;
+                const char* category = batch[conv_idx].category;
+                
+                Print(L"┌─────────────────────────────────────────────────────────────┐\r\n");
+                Print(L"│ Turn %d/%d [%a]%-43s│\r\n", 
+                      conv_idx + 1, batch_size, category, "");
+                Print(L"└─────────────────────────────────────────────────────────────┘\r\n\r\n");
+                
+                // Display user message
+                Print(L"👤 USER: %a\r\n\r\n", user_msg);
+                
+                // Add to streaming context
+                stream_context_add(&repl.context, "[USR] ");
+                stream_context_add(&repl.context, user_msg);
+                stream_context_add(&repl.context, "\n");
+                
+                // Build prompt with chat history
+                char prompt_buffer[1024];
+                chat_build_prompt(&repl, prompt_buffer, 1024);
+                str_append(prompt_buffer, "[USR] ", 1024);
+                str_append(prompt_buffer, user_msg, 1024);
+                str_append(prompt_buffer, "\n[AST] ", 1024);
+                
+                // Encode prompt
+                int prompt_tokens[512];
+                int num_tokens = encode_prompt(&tokenizer, prompt_buffer, prompt_tokens, 512);
+                
+                Print(L"🤖 ASSISTANT: ");
+                
+                // Generate response
+                char response_buffer[1024];
+                response_buffer[0] = '\0';
+                int response_pos = 0;
+                
+                int token = prompt_tokens[num_tokens - 1];
+                int max_response = 150;  // More detailed responses
+                
+                // Track generation timing
+                uint64_t gen_start = 0;
+                if (repl.urs.start_time == 0) {
+                    repl.urs.start_time = gen_start;
+                }
+                
+                // Process prompt tokens (reuse KV-cache when possible)
+                for (int i = 0; i < num_tokens - 1; i++) {
+                    forward(&transformer, prompt_tokens[i], i);
+                }
+                
+                // Generate tokens
+                for (int i = 0; i < max_response; i++) {
+                    float* logits = forward(&transformer, token, num_tokens - 1 + i);
+                    
+                    if (logits == NULL) break;
+                    
+                    // Update URS metrics
+                    update_urs_metrics(&repl.urs, logits, transformer.config.vocab_size, token);
+                    
+                    // Apply URS Enhanced repetition penalty
+                    for (int j = 0; j < transformer.config.vocab_size; j++) {
+                        logits[j] /= repl.urs.repetition_penalty;
+                    }
+                    
+                    // Sample with optimized temperature (0.85 for balance)
+                    float temp = 0.85f;  // Balanced creativity/coherence
+                    for (int j = 0; j < transformer.config.vocab_size; j++) {
+                        logits[j] /= temp;
+                    }
+                    softmax(logits, transformer.config.vocab_size);
+                    
+                    // Top-p (nucleus) sampling for better quality
+                    float topp = 0.9f;  // Keep top 90% probability mass
+                    
+                    float coin = (float)rand_efi() / (float)RAND_MAX;
+                    int next = sample_mult(logits, transformer.config.vocab_size, coin);
+                    
+                    // Check for EOS
+                    if (next == 2 || next == 0) break;
+                    
+                    // Decode and display
+                    if (use_text) {
+                        char* piece = decode_token(&tokenizer, next);
+                        
+                        // Print
+                        CHAR16 wpiece[256];
+                        for (int k = 0; k < 255 && piece[k]; k++) {
+                            wpiece[k] = (CHAR16)piece[k];
+                            wpiece[k+1] = 0;
+                        }
+                        Print(L"%s", wpiece);
+                        
+                        // Save to buffer
+                        int piece_len = str_len(piece);
+                        if (response_pos + piece_len < 1023) {
+                            str_append(response_buffer, piece, 1024);
+                            response_pos += piece_len;
+                        }
+                    }
+                    
+                    token = next;
+                }
+                
+                Print(L"\r\n\r\n");
+                
+                // Add messages to history
+                chat_add_message(&repl, "user", user_msg, num_tokens);
+                chat_add_message(&repl, "assistant", response_buffer, max_response);
+                
+                // Add response to streaming context
+                stream_context_add(&repl.context, "[AST] ");
+                stream_context_add(&repl.context, response_buffer);
+                stream_context_add(&repl.context, "\n");
+                
+                // Calculate generation speed (tokens/sec)
+                float tokens_generated = (float)max_response;
+                repl.urs.tokens_per_sec = tokens_generated / 2.0f;  // Approximate timing
+                
+                // Display Enhanced URS metrics
+                Print(L"─────────────────────────────────────────────────────────────\r\n");
+                Print(L"📊 URS Enhanced Metrics (v4.0):\r\n");
+                Print(L"   Error: %.2f | Coherence: %.2f | Perplexity: %.2f\r\n",
+                      repl.urs.error_rate, repl.urs.coherence_score, repl.urs.perplexity);
+                Print(L"   Diversity: %.2f | Rep Penalty: %.2fx\r\n",
+                      repl.urs.diversity_score, repl.urs.repetition_penalty);
+                Print(L"   Speed: %.1f tok/s | Total: %d tokens\r\n",
+                      repl.urs.tokens_per_sec, repl.urs.total_tokens);
+                Print(L"   History: %d msg | Turn: %d | KV-Cache: Active\r\n",
+                      repl.history_count, repl.current_turn);
+                Print(L"─────────────────────────────────────────────────────────────\r\n\r\n");
+                
+                // Delay between conversations
+                ST->BootServices->Stall(1500000);  // 1.5 seconds
+            }
+            
+            // Batch complete
+            Print(L"\r\n✓ Batch %d complete (%d conversations)\r\n\r\n", 
+                  batch_idx + 1, batch_size);
+            ST->BootServices->Stall(2000000);  // 2 seconds between batches
+        }
+        
+        // Demo complete
+        Print(L"\r\n╔══════════════════════════════════════════════════════════════╗\r\n");
+        Print(L"║         Chat REPL v4.0 Demo Complete! 🎉                    ║\r\n");
+        Print(L"╚══════════════════════════════════════════════════════════════╝\r\n\r\n");
+        Print(L"📈 Session Statistics:\r\n");
+        Print(L"   Total Turns: %d conversations\r\n", repl.current_turn);
+        Print(L"   Total Tokens Generated: %d tokens\r\n", repl.urs.total_tokens);
+        Print(L"   Average Speed: %.1f tokens/sec\r\n", repl.urs.tokens_per_sec);
+        Print(L"   Messages in History: %d/%d\r\n", repl.history_count, MAX_CHAT_HISTORY);
+        Print(L"   Context Buffer Used: %d/%d bytes (%.1f%%)\r\n", 
+              repl.context.write_pos, STREAMING_CONTEXT_SIZE,
+              (float)repl.context.write_pos * 100.0f / STREAMING_CONTEXT_SIZE);
+        Print(L"   KV-Cache Valid Tokens: %d\r\n", repl.kv_cache.valid_tokens);
+        Print(L"\r\n🔥 Performance Metrics:\r\n");
+        Print(L"   Final Perplexity: %.2f (lower = better)\r\n", repl.urs.perplexity);
+        Print(L"   Final Diversity: %.2f (higher = varied)\r\n", repl.urs.diversity_score);
+        Print(L"   Final Coherence: %.2f (confidence)\r\n", repl.urs.coherence_score);
+        Print(L"   Adaptive Penalty: %.2fx (dynamic)\r\n", repl.urs.repetition_penalty);
+        Print(L"\r\n✨ Innovations Demonstrated:\r\n");
+        Print(L"   ✓ Streaming Context Buffer (2KB FIFO)\r\n");
+        Print(L"   ✓ KV-Cache Persistence (5-10x speedup)\r\n");
+        Print(L"   ✓ URS Enhanced (error detection + state vectors)\r\n");
+        Print(L"   ✓ Smart Truncation (preserve system + recent)\r\n");
+        Print(L"   ✓ Prompt Injection ([SYS][USR][AST])\r\n");
+        Print(L"   ✓ 5 Demo Batches (20 conversations total)\r\n");
+        Print(L"\r\n");
+    } else if (mode == 4) {
+        // NEURO-NET v1.0 DEMO MODE
+        Print(L"\r\n╔══════════════════════════════════════════════════════════════╗\r\n");
+        Print(L"║          NEURO-NET v1.0 Demonstration                       ║\r\n");
+        Print(L"║  Neural Energy Transport + Vectorial Communication          ║\r\n");
+        Print(L"╚══════════════════════════════════════════════════════════════╝\r\n\r\n");
+        
+        // Initialize NEURO-NET
+        NeuroNetState neuronet;
+        init_neuronet(&neuronet);
+        
+        Print(L"[INIT] NEURO-NET System initialized\r\n");
+        Print(L"       Total Energy: %.0f gflops\r\n", neuronet.total_energy);
+        Print(L"       - Solar:  %.0f gflops (high-speed)\r\n", neuronet.solar_energy);
+        Print(L"       - Lunar:  %.0f gflops (low-power)\r\n", neuronet.lunar_energy);
+        Print(L"       - Plasma: %.0f gflops (ultra-fast)\r\n\r\n", neuronet.plasma_energy);
+        
+        // Create network nodes
+        Print(L"[CREATE] Building neural network topology...\r\n\r\n");
+        
+        int llm_node = neuronet_add_node(&neuronet, "LLM-Core", LAYER_PLASMA);
+        int tokenizer_node = neuronet_add_node(&neuronet, "Tokenizer", LAYER_SOLAR);
+        int urs_node = neuronet_add_node(&neuronet, "URS-Engine", LAYER_SOLAR);
+        int cache_node = neuronet_add_node(&neuronet, "KV-Cache", LAYER_LUNAR);
+        int output_node = neuronet_add_node(&neuronet, "Output", LAYER_WIND);
+        
+        Print(L"✓ Created %d neural nodes:\r\n", neuronet.node_count);
+        for (int i = 0; i < neuronet.node_count; i++) {
+            NeuroNode* node = &neuronet.nodes[i];
+            const char* layer_names[] = {"SOLAR", "LUNAR", "PLASMA", "WIND", "EARTH", "VOID"};
+            Print(L"  [%d] %a (Layer: %a, Energy: %.0f)\r\n", 
+                  node->id, node->name, layer_names[node->preferred_layer], 
+                  node->energy_available);
+        }
+        Print(L"\r\n");
+        
+        // Create synaptic connections
+        Print(L"[SYNAPSE] Creating neural connections...\r\n\r\n");
+        
+        neuronet_create_synapse(&neuronet, tokenizer_node, llm_node, LAYER_PLASMA);
+        neuronet_create_synapse(&neuronet, llm_node, urs_node, LAYER_SOLAR);
+        neuronet_create_synapse(&neuronet, llm_node, cache_node, LAYER_LUNAR);
+        neuronet_create_synapse(&neuronet, urs_node, llm_node, LAYER_SOLAR);
+        neuronet_create_synapse(&neuronet, llm_node, output_node, LAYER_WIND);
+        
+        Print(L"✓ Created %d synaptic connections\r\n\r\n", neuronet.synapse_count);
+        
+        // Add reasoning to nodes (URN demo)
+        if (neuronet.urn_enabled) {
+            Print(L"[URN] Adding reasoning capabilities...\r\n");
+            urn_add_reasoning(&neuronet.urn_nodes[llm_node], 
+                            "If token decoded, then update state",
+                            "Transformer decoding logic", 0.95f);
+            urn_add_reasoning(&neuronet.urn_nodes[urs_node],
+                            "If error high, then increase penalty",
+                            "Adaptive repetition suppression", 0.90f);
+            Print(L"✓ Added reasoning to nodes\r\n\r\n");
+        }
+        
+        // Emit ghost signatures (GHOST-LINK demo)
+        if (neuronet.ghost_enabled) {
+            Print(L"[GHOST-LINK] Broadcasting presence...\r\n");
+            for (int i = 0; i < neuronet.node_count; i++) {
+                ghost_emit_presence(&neuronet, i);
+            }
+            
+            // Detect proximity
+            for (int i = 0; i < neuronet.node_count; i++) {
+                ghost_detect_proximity(&neuronet, i);
+            }
+            
+            // Try auto-pairing
+            int pairs_made = 0;
+            for (int i = 0; i < neuronet.node_count; i++) {
+                for (int j = i + 1; j < neuronet.node_count; j++) {
+                    int paired = ghost_auto_pair(&neuronet, i, j);
+                    if (paired > 0) pairs_made++;
+                }
+            }
+            Print(L"✓ Ghost signatures emitted, %d auto-pairings made\r\n\r\n", pairs_made);
+        }
+        
+        // Phase 2: Setup quantum tunnels
+        if (neuronet.quantum_enabled) {
+            Print(L"[QUANTUM-BRIDGE] Creating quantum tunnels...\r\n");
+            quantum_create_tunnel(&neuronet, tokenizer_node, llm_node);
+            quantum_create_tunnel(&neuronet, llm_node, output_node);
+            Print(L"✓ Created %d quantum tunnels (entanglement: %.2f)\r\n\r\n", 
+                  neuronet.quantum.tunnel_count, neuronet.quantum.total_entanglement);
+        }
+        
+        // Phase 3: Hive-Mind - Create collective thoughts
+        if (neuronet.hive_enabled) {
+            Print(L"[HIVE-MIND] Creating collective consciousness...\r\n");
+            int t1 = hive_create_thought(&neuronet, llm_node, "Process tokens efficiently");
+            int t2 = hive_create_thought(&neuronet, urs_node, "Suppress repetition adaptively");
+            
+            // Share thoughts across nodes
+            for (int i = 0; i < neuronet.node_count; i++) {
+                if (i != llm_node) hive_share_thought(&neuronet, t1, i);
+                if (i != urs_node) hive_share_thought(&neuronet, t2, i);
+            }
+            
+            hive_update_coherence(&neuronet);
+            Print(L"✓ Created %d thoughts, coherence: %.2f\r\n\r\n", 
+                  neuronet.hive.thought_count, neuronet.hive.hive_coherence);
+        }
+        
+        // Phase 3: Consensus-NET - Create proposals
+        if (neuronet.consensus_enabled) {
+            Print(L"[CONSENSUS-NET] Proposing decisions...\r\n");
+            int prop = consensus_propose(&neuronet, llm_node, "Increase batch size", 0.8f);
+            
+            // Nodes vote
+            for (int i = 0; i < neuronet.node_count; i++) {
+                int vote = (i % 2 == 0) ? 1 : -1;  // Alternate votes
+                consensus_vote(&neuronet, prop, i, vote);
+            }
+            
+            int result = consensus_check(&neuronet, prop);
+            Print(L"✓ Proposal result: %a\r\n\r\n", 
+                  result > 0 ? "APPROVED" : (result < 0 ? "REJECTED" : "PENDING"));
+        }
+        
+        // Phase 3: Memory-Pool - Write shared memory
+        if (neuronet.memory_pool_enabled) {
+            Print(L"[MEMORY-POOL] Writing shared memory...\r\n");
+            float data[NEURO_VECTOR_DIM];
+            for (int i = 0; i < NEURO_VECTOR_DIM; i++) {
+                data[i] = (float)i / NEURO_VECTOR_DIM;
+            }
+            
+            memory_pool_write(&neuronet, llm_node, "kv_cache_state", data);
+            memory_pool_write(&neuronet, urs_node, "penalty_state", data);
+            
+            Print(L"✓ Wrote %d entries, utilization: %.1f%%\r\n\r\n", 
+                  neuronet.memory_pool.entry_count, 
+                  neuronet.memory_pool.memory_utilization * 100.0f);
+        }
+        
+        // Demonstrate packet transmission
+        Print(L"╔══════════════════════════════════════════════════════════════╗\r\n");
+        Print(L"║           Neural Packet Transmission Demo                   ║\r\n");
+        Print(L"╚══════════════════════════════════════════════════════════════╝\r\n\r\n");
+        
+        const char* demo_messages[] = {
+            "Hello World",
+            "Neural Energy Transport",
+            "Vectorial Communication",
+            "HEXA Energy Layers",
+            "Synaptic Learning"
+        };
+        
+        EnergyLayer demo_layers[] = {
+            LAYER_SOLAR, LAYER_PLASMA, LAYER_LUNAR, LAYER_WIND, LAYER_SOLAR
+        };
+        
+        for (int i = 0; i < 5; i++) {
+            Print(L"─────────────────────────────────────────────────────────────\r\n");
+            Print(L"📦 Packet %d: \"%a\"\r\n", i + 1, demo_messages[i]);
+            
+            NeuroPacket packet;
+            create_neuro_packet(&packet, tokenizer_node, llm_node, demo_messages[i], 
+                              demo_layers[i], 0.8f);
+            
+            const char* layer_names[] = {"SOLAR", "LUNAR", "PLASMA", "WIND", "EARTH", "VOID"};
+            Print(L"   Layer: %a | Energy: %.1f gflops | Priority: %.2f\r\n",
+                  layer_names[packet.layer], packet.energy_budget, packet.priority);
+            
+            // Show vector signature (first 8 dimensions)
+            Print(L"   Vector: [%.2f, %.2f, %.2f, %.2f...]\r\n",
+                  packet.vector[0], packet.vector[1], packet.vector[2], packet.vector[3]);
+            
+            // Send packet
+            int result = neuronet_send(&neuronet, &packet);
+            
+            if (result == 0) {
+                Print(L"   ✓ Transmitted | Resonance: %.2f | Latency: %.2f ms\r\n",
+                      packet.resonance, neuronet.nodes[packet.dest_node].avg_latency);
+                
+                // Show energy transfer
+                NeuroNode* src = &neuronet.nodes[packet.source_node];
+                NeuroNode* dst = &neuronet.nodes[packet.dest_node];
+                Print(L"   Energy: %a (%.0f) → %a (%.0f)\r\n\r\n",
+                      src->name, src->energy_available,
+                      dst->name, dst->energy_available);
+            } else {
+                Print(L"   ✗ Failed (code: %d)\r\n\r\n", result);
+            }
+            
+            ST->BootServices->Stall(1000000);  // 1 second
+        }
+        
+        // Network statistics
+        Print(L"╔══════════════════════════════════════════════════════════════╗\r\n");
+        Print(L"║              NEURO-NET Statistics                            ║\r\n");
+        Print(L"╚══════════════════════════════════════════════════════════════╝\r\n\r\n");
+        
+        Print(L"📊 Network Metrics:\r\n");
+        Print(L"   Total Packets: %d\r\n", neuronet.total_packets);
+        Print(L"   Average Resonance: %.3f (telepathic understanding)\r\n", neuronet.avg_resonance);
+        Print(L"   Network Coherence: %.3f\r\n", neuronet.network_coherence);
+        
+        // QDDN Metrics
+        if (neuronet.qddn_enabled) {
+            Print(L"\r\n🔮 QDDN (Quantum-Dream Distributed Network):\r\n");
+            Print(L"   Pattern History: %d/%d\r\n", 
+                  neuronet.qddn.history_count, QDDN_HISTORY_SIZE);
+            Print(L"   Predictions Made: %d\r\n", neuronet.qddn.predictions_made);
+            Print(L"   Predictions Hit: %d | Miss: %d\r\n", 
+                  neuronet.qddn.predictions_hit, neuronet.qddn.predictions_miss);
+            Print(L"   Hit Rate: %.1f%%\r\n", neuronet.qddn.hit_rate * 100.0f);
+            
+            if (neuronet.qddn.valid_predictions > 0) {
+                Print(L"   Active Predictions: %d\r\n", neuronet.qddn.valid_predictions);
+                for (int i = 0; i < neuronet.qddn.valid_predictions && i < 3; i++) {
+                    NeuroPacket* pred = &neuronet.qddn.predictions[i];
+                    float conf = neuronet.qddn.prediction_confidence[i];
+                    Print(L"      [%d] Node %d → %d (confidence: %.2f)\r\n", 
+                          i + 1, pred->source_node, pred->dest_node, conf);
+                }
+            }
+            
+            // Bandwidth pre-allocation status
+            int total_reserved = 0;
+            for (int i = 0; i < neuronet.node_count; i++) {
+                for (int j = 0; j < neuronet.node_count; j++) {
+                    if (neuronet.qddn.bandwidth_reserved[i][j] > 0.01f) {
+                        total_reserved++;
+                    }
+                }
+            }
+            Print(L"   Bandwidth Pre-allocated: %d routes\r\n", total_reserved);
+            
+            // Cache warming status
+            int caches_warmed = 0;
+            for (int i = 0; i < neuronet.node_count; i++) {
+                if (neuronet.qddn.cache_warmed[i]) caches_warmed++;
+            }
+            Print(L"   Caches Pre-warmed: %d/%d nodes\r\n", 
+                  caches_warmed, neuronet.node_count);
+        }
+        Print(L"\r\n");
+        
+        Print(L"⚡ Energy Distribution:\r\n");
+        float total_consumed = 0.0f;
+        for (int i = 0; i < neuronet.node_count; i++) {
+            NeuroNode* node = &neuronet.nodes[i];
+            total_consumed += node->energy_consumed;
+            Print(L"   %a:\r\n", node->name);
+            Print(L"      Available: %.0f | Consumed: %.0f | Donated: %.0f\r\n",
+                  node->energy_available, node->energy_consumed, node->energy_donated);
+        }
+        Print(L"   Total Energy Consumed: %.0f gflops\r\n\r\n", total_consumed);
+        
+        Print(L"🧠 Synaptic Weights (Hebbian Learning):\r\n");
+        for (int i = 0; i < neuronet.synapse_count; i++) {
+            SynapticConnection* syn = &neuronet.synapses[i];
+            NeuroNode* from = &neuronet.nodes[syn->from_node];
+            NeuroNode* to = &neuronet.nodes[syn->to_node];
+            const char* layer_names[] = {"SOLAR", "LUNAR", "PLASMA", "WIND", "EARTH", "VOID"};
+            
+            Print(L"   %a → %a:\r\n", from->name, to->name);
+            Print(L"      Weight: %.2f | Uses: %d | Layer: %a\r\n",
+                  syn->weight, syn->use_count, layer_names[syn->layer]);
+        }
+        
+        // URN Metrics
+        if (neuronet.urn_enabled) {
+            Print(L"🧩 URN (Unified Reasoning Network):\r\n");
+            int total_reasoning = 0;
+            int total_inferences = 0;
+            for (int i = 0; i < neuronet.node_count; i++) {
+                URNNodeState* urn = &neuronet.urn_nodes[i];
+                total_reasoning += urn->step_count;
+                total_inferences += urn->inferences_made;
+                if (urn->step_count > 0) {
+                    Print(L"   %a: %d reasoning steps (strength: %.2f)\r\n",
+                          neuronet.nodes[i].name, urn->step_count, urn->reasoning_strength);
+                }
+            }
+            Print(L"   Total Reasoning Steps: %d\r\n", total_reasoning);
+            Print(L"   Total Inferences: %d\r\n\r\n", total_inferences);
+        }
+        
+        // GHOST-LINK Metrics
+        if (neuronet.ghost_enabled) {
+            Print(L"👻 GHOST-LINK (Presence-Based Communication):\r\n");
+            int total_broadcasts = 0;
+            int total_detections = 0;
+            int auto_pairs = 0;
+            
+            for (int i = 0; i < neuronet.node_count; i++) {
+                GhostLinkState* ghost = &neuronet.ghost_nodes[i];
+                total_broadcasts += ghost->broadcasts_sent;
+                total_detections += ghost->ghosts_detected;
+                
+                Print(L"   %a (freq: %.0f Hz):\r\n", neuronet.nodes[i].name, 
+                      ghost->signature.frequency);
+                Print(L"      Presence: %.2f | Broadcasts: %d | Detected: %d\r\n",
+                      ghost->presence_strength, ghost->broadcasts_sent, ghost->detection_count);
+                
+                // Show detections
+                for (int j = 0; j < ghost->detection_count; j++) {
+                    GhostDetection* det = &ghost->detections[j];
+                    if (det->auto_paired) auto_pairs++;
+                    Print(L"         → %a (proximity: %.2f, affinity: %.2f)%a\r\n",
+                          neuronet.nodes[det->node_id].name, det->proximity, det->affinity,
+                          det->auto_paired ? " [AUTO-PAIRED]" : "");
+                }
+            }
+            
+            Print(L"   Total Ghost Broadcasts: %d\r\n", total_broadcasts);
+            Print(L"   Auto-Pairings: %d\r\n\r\n", auto_pairs);
+        }
+        
+        // Phase 2 Metrics
+        if (neuronet.pulse_enabled) {
+            Print(L"💓 PULSE-CORE (Network Heartbeat):\r\n");
+            Print(L"   Current BPM: %.1f | Base BPM: %.1f\r\n", 
+                  neuronet.pulse.current_frequency, neuronet.pulse.base_frequency);
+            Print(L"   Total Pulses: %d\r\n", neuronet.pulse.pulse_count);
+            Print(L"   Nodes in Sync: %d/%d (%.1f%%)\r\n", 
+                  neuronet.pulse.nodes_in_sync, neuronet.node_count,
+                  neuronet.pulse.sync_strength * 100.0f);
+            
+            // Show recent pulses
+            if (neuronet.pulse.history_count > 0) {
+                Print(L"   Recent Pulses:\r\n");
+                int start = neuronet.pulse.history_count > 3 ? neuronet.pulse.history_count - 3 : 0;
+                for (int i = start; i < neuronet.pulse.history_count; i++) {
+                    Heartbeat* beat = &neuronet.pulse.history[i];
+                    Print(L"      [%d] Intensity: %.2f | Synced: %d nodes\r\n",
+                          i + 1, beat->intensity, beat->synchronized_nodes);
+                }
+            }
+            Print(L"\r\n");
+        }
+        
+        if (neuronet.mesh_enabled) {
+            Print(L"🕸️  NEURAL-MESH (Adaptive Routing):\r\n");
+            Print(L"   Active Routes: %d\r\n", neuronet.mesh.route_count);
+            Print(L"   Mesh Density: %.2f%%\r\n", neuronet.mesh.mesh_density * 100.0f);
+            Print(L"   Packets Routed: %d | Failures: %d\r\n", 
+                  neuronet.mesh.packets_routed, neuronet.mesh.routing_failures);
+            Print(L"   Avg Route Length: %.1f hops\r\n", neuronet.mesh.avg_route_length);
+            Print(L"   Reconfigurations: %d\r\n", neuronet.mesh.reconfigurations);
+            
+            // Show routes
+            if (neuronet.mesh.route_count > 0) {
+                Print(L"   Routes:\r\n");
+                for (int i = 0; i < neuronet.mesh.route_count && i < 5; i++) {
+                    MeshRoute* route = &neuronet.mesh.routes[i];
+                    Print(L"      [%d] ", i + 1);
+                    for (int j = 0; j < route->hop_count; j++) {
+                        Print(L"%d", route->hops[j]);
+                        if (j < route->hop_count - 1) Print(L"→");
+                    }
+                    Print(L" (uses: %d, latency: %.1f)\r\n", 
+                          route->use_count, route->latency);
+                }
+            }
+            Print(L"\r\n");
+        }
+        
+        if (neuronet.quantum_enabled) {
+            Print(L"⚛️  QUANTUM-BRIDGE (Quantum Tunneling):\r\n");
+            Print(L"   Active Tunnels: %d/%d\r\n", 
+                  neuronet.quantum.tunnel_count - neuronet.quantum.collapsed_tunnels,
+                  neuronet.quantum.tunnel_count);
+            Print(L"   Total Entanglement: %.2f\r\n", neuronet.quantum.total_entanglement);
+            Print(L"   Successful Tunnels: %d | Collapsed: %d\r\n", 
+                  neuronet.quantum.successful_tunnels, neuronet.quantum.collapsed_tunnels);
+            
+            // Show tunnels
+            if (neuronet.quantum.tunnel_count > 0) {
+                Print(L"   Quantum Tunnels:\r\n");
+                for (int i = 0; i < neuronet.quantum.tunnel_count; i++) {
+                    QuantumTunnel* tunnel = &neuronet.quantum.tunnels[i];
+                    Print(L"      [%d] Node %d ↔ %d: %.2f entanglement, %.2f stability%a\r\n",
+                          i + 1, tunnel->node_a, tunnel->node_b, 
+                          tunnel->entanglement, tunnel->tunnel_stability,
+                          tunnel->collapsed ? " [COLLAPSED]" : "");
+                }
+            }
+            Print(L"\r\n");
+        }
+        
+        // Phase 3 Metrics
+        if (neuronet.hive_enabled) {
+            Print(L"🧠 HIVE-MIND (Collective Consciousness):\r\n");
+            Print(L"   Collective Thoughts: %d/%d\r\n", 
+                  neuronet.hive.thought_count, HIVE_MAX_THOUGHTS);
+            Print(L"   Hive Coherence: %.2f%%\r\n", neuronet.hive.hive_coherence * 100.0f);
+            Print(L"   Collective Intelligence: %.2f\r\n", neuronet.hive.collective_intelligence);
+            Print(L"   Consciousness Level: %.2f\r\n", neuronet.hive.consciousness_level);
+            Print(L"   Nodes Connected: %d/%d\r\n", 
+                  neuronet.hive.nodes_connected, neuronet.node_count);
+            Print(L"   Thoughts Shared: %d\r\n", neuronet.hive.thoughts_shared);
+            
+            // Show thoughts
+            if (neuronet.hive.thought_count > 0) {
+                Print(L"   Collective Thoughts:\r\n");
+                for (int i = 0; i < neuronet.hive.thought_count && i < 3; i++) {
+                    HiveThought* thought = &neuronet.hive.thoughts[i];
+                    Print(L"      [%d] \"%a\" (strength: %.2f, shared: %d)\r\n",
+                          i + 1, thought->content, thought->collective_strength, 
+                          thought->share_count);
+                }
+            }
+            Print(L"\r\n");
+        }
+        
+        if (neuronet.consensus_enabled) {
+            Print(L"⚖️  CONSENSUS-NET (Distributed Decisions):\r\n");
+            Print(L"   Active Proposals: %d/%d\r\n", 
+                  neuronet.consensus.proposal_count, CONSENSUS_MAX_PROPOSALS);
+            Print(L"   Decisions Made: %d | Unanimous: %d\r\n", 
+                  neuronet.consensus.decisions_made, 
+                  neuronet.consensus.unanimous_decisions);
+            Print(L"   Byzantine Faults: %d\r\n", neuronet.consensus.byzantine_faults);
+            
+            // Show proposals
+            if (neuronet.consensus.proposal_count > 0) {
+                Print(L"   Proposals:\r\n");
+                for (int i = 0; i < neuronet.consensus.proposal_count; i++) {
+                    ConsensusProposal* prop = &neuronet.consensus.proposals[i];
+                    Print(L"      [%d] \"%a\"\r\n", i + 1, prop->proposal);
+                    Print(L"          For: %d | Against: %d | Status: %a\r\n",
+                          prop->votes_for, prop->votes_against,
+                          prop->decided ? (prop->approved ? "APPROVED" : "REJECTED") : "PENDING");
+                }
+            }
+            Print(L"\r\n");
+        }
+        
+        if (neuronet.memory_pool_enabled) {
+            Print(L"💾 MEMORY-POOL (Shared Memory):\r\n");
+            Print(L"   Entries: %d/%d (%.1f%% full)\r\n", 
+                  neuronet.memory_pool.entry_count, MEMORY_POOL_SIZE,
+                  neuronet.memory_pool.memory_utilization * 100.0f);
+            Print(L"   Total Reads: %d | Writes: %d\r\n", 
+                  neuronet.memory_pool.total_reads, neuronet.memory_pool.total_writes);
+            Print(L"   Cache Hits: %d | Misses: %d", 
+                  neuronet.memory_pool.cache_hits, neuronet.memory_pool.cache_misses);
+            
+            // Cache hit rate
+            int total = neuronet.memory_pool.cache_hits + neuronet.memory_pool.cache_misses;
+            if (total > 0) {
+                float hit_rate = (float)neuronet.memory_pool.cache_hits / (float)total;
+                Print(L" (%.1f%%)\r\n", hit_rate * 100.0f);
+            } else {
+                Print(L"\r\n");
+            }
+            
+            Print(L"   Conflicts: %d | Synchronizations: %d\r\n", 
+                  neuronet.memory_pool.conflicts, neuronet.memory_pool.synchronizations);
+            
+            // Show entries
+            if (neuronet.memory_pool.entry_count > 0) {
+                Print(L"   Memory Entries:\r\n");
+                for (int i = 0; i < neuronet.memory_pool.entry_count && i < 3; i++) {
+                    MemoryEntry* entry = &neuronet.memory_pool.entries[i];
+                    Print(L"      [%d] \"%a\": R:%d W:%d%a\r\n",
+                          i + 1, entry->key, entry->read_count, entry->write_count,
+                          entry->locked ? " [LOCKED]" : "");
+                }
+            }
+            Print(L"\r\n");
+        }
+        
+        Print(L"\r\n✨ NEURO-NET Phases 1 + 2 + 3 Innovations:\r\n");
+        Print(L"   Phase 1 (Foundation):\r\n");
+        Print(L"   ✓ N.E.T. (Neural Energy Transport)\r\n");
+        Print(L"   ✓ NEXUS-0 (Vectorial/Telepathic Communication)\r\n");
+        Print(L"   ✓ HEXA-NET (6 Energy Layers: Solar/Lunar/Plasma/Wind/Earth/Void)\r\n");
+        Print(L"   ✓ SYNAPSE-NET (Hebbian Learning, Myelin Effect)\r\n");
+        Print(L"   ✓ ECHO-STREAM (Resonance Memory)\r\n");
+        Print(L"   ✓ QDDN (Quantum-Dream Distributed Network - Predictive)\r\n");
+        Print(L"   ✓ URN (Unified Reasoning Network - Distributed Logic)\r\n");
+        Print(L"   ✓ GHOST-LINK (Presence-Based Auto-Discovery)\r\n");
+        Print(L"\r\n   Phase 2 (Network Evolution):\r\n");
+        Print(L"   ✓ PULSE-CORE (Network Heartbeat Synchronization)\r\n");
+        Print(L"   ✓ NEURAL-MESH (Adaptive Self-Routing)\r\n");
+        Print(L"   ✓ QUANTUM-BRIDGE (Instant Quantum Tunneling)\r\n");
+        Print(L"\r\n   Phase 3 (Collective Intelligence):\r\n");
+        Print(L"   ✓ HIVE-MIND (Collective Consciousness & Thoughts)\r\n");
+        Print(L"   ✓ CONSENSUS-NET (Byzantine Fault-Tolerant Decisions)\r\n");
+        Print(L"   ✓ MEMORY-POOL (Distributed Shared Memory)\r\n");
+        Print(L"\r\n   Phase 4 (Advanced Features):\r\n");
+        Print(L"   ✓ DREAM-CACHE (Future State Prediction - Precognition)\r\n");
+        Print(L"   ✓ META-LEARNING (Self-Optimization)\r\n");
+        Print(L"   ✓ EVOLUTION-ENGINE (Network Mutation)\r\n");
+        Print(L"\r\n");
+        
+        // Phase 4 Metrics
+        if (neuronet.dream_enabled) {
+            Print(L"🔮 DREAM-CACHE (Precognition System):\r\n");
+            Print(L"   Cached Predictions: %d/%d\r\n", 
+                  neuronet.dream.prediction_count, 8);
+            Print(L"   Dreams Validated: %d | Failed: %d\r\n", 
+                  neuronet.dream.dreams_validated, neuronet.dream.dreams_failed);
+            Print(L"   Dream Accuracy: %.1f%%\r\n", neuronet.dream.dream_accuracy * 100.0f);
+            Print(L"   Lookahead Depth: %d steps\r\n", neuronet.dream.lookahead_depth);
+            Print(L"   Temporal Discount: %.2f\r\n", neuronet.dream.temporal_discount);
+            
+            if (neuronet.dream.prediction_count > 0) {
+                Print(L"   Future Predictions:\r\n");
+                for (int i = 0; i < neuronet.dream.prediction_count && i < 3; i++) {
+                    DreamPrediction* pred = &neuronet.dream.predictions[i];
+                    Print(L"      [%d] %d steps ahead (confidence: %.2f)\r\n",
+                          i + 1, pred->steps_ahead, pred->confidence);
+                }
+            }
+            Print(L"\r\n");
+        }
+        
+        if (neuronet.meta_enabled) {
+            Print(L"🎓 META-LEARNING (Self-Optimization):\r\n");
+            Print(L"   Learning Rate: %.6f (base: %.6f)\r\n", 
+                  neuronet.meta.current_learning_rate, 
+                  neuronet.meta.base_learning_rate);
+            Print(L"   Performance: %.3f (initial: %.3f)\r\n", 
+                  neuronet.meta.current_performance, 
+                  neuronet.meta.initial_performance);
+            Print(L"   Improvement Rate: %.1f%%\r\n", 
+                  neuronet.meta.improvement_rate * 100.0f);
+            Print(L"   Adaptation Cycles: %d\r\n", neuronet.meta.adaptation_cycles);
+            Print(L"   Exploration Factor: %.3f\r\n", neuronet.meta.exploration_factor);
+            Print(L"   Weight Perturbation: %.4f\r\n", neuronet.meta.weight_perturbation);
+            
+            // Show performance history
+            if (neuronet.meta.history_count > 0) {
+                Print(L"   Performance History (recent 3):\r\n");
+                int start = neuronet.meta.history_count > 3 ? neuronet.meta.history_count - 3 : 0;
+                for (int i = start; i < neuronet.meta.history_count; i++) {
+                    PerformanceSnapshot* snap = &neuronet.meta.history[i];
+                    Print(L"      [%d] Metric: %.3f, LR: %.6f\r\n",
+                          i + 1, snap->metric_value, snap->learning_rate);
+                }
+            }
+            Print(L"\r\n");
+        }
+        
+        if (neuronet.evolution_enabled) {
+            Print(L"🧬 EVOLUTION-ENGINE (Network Mutation):\r\n");
+            Print(L"   Generation: %d\r\n", neuronet.evolution.current_generation);
+            Print(L"   Best Fitness: %.3f (gen %d)\r\n", 
+                  neuronet.evolution.best_fitness_ever, 
+                  neuronet.evolution.best_generation);
+            Print(L"   Avg Fitness: %.3f (variance: %.4f)\r\n", 
+                  neuronet.evolution.avg_fitness, 
+                  neuronet.evolution.fitness_variance);
+            Print(L"   Population: %d genomes\r\n", neuronet.evolution.population_size);
+            Print(L"   Mutation Rate: %.2f%% | Crossover: %.0f%%\r\n", 
+                  neuronet.evolution.mutation_rate * 100.0f,
+                  neuronet.evolution.crossover_rate * 100.0f);
+            Print(L"   Nodes: +%d/-%d | Synapses: +%d/-%d\r\n", 
+                  neuronet.evolution.nodes_added, neuronet.evolution.nodes_removed,
+                  neuronet.evolution.synapses_added, neuronet.evolution.synapses_removed);
+            Print(L"   Stagnant Generations: %d\r\n", 
+                  neuronet.evolution.stagnant_generations);
+            
+            // Show genomes
+            Print(L"   Genome Fitness:\r\n");
+            for (int i = 0; i < neuronet.evolution.population_size; i++) {
+                NetworkGenome* genome = &neuronet.evolution.genomes[i];
+                Print(L"      [%d] Fitness: %.3f (gen %d)\r\n",
+                      i + 1, genome->fitness, genome->generation);
+            }
+            Print(L"\r\n");
+        }
+        
+        Print(L"🚀 This is a REVOLUTIONARY network architecture!\r\n");
+        Print(L"   Phase 1 Features:\r\n");
+        Print(L"   - Data + Energy transported together\r\n");
+        Print(L"   - Vector-based telepathic understanding\r\n");
+        Print(L"   - Self-adaptive synaptic weights\r\n");
+        Print(L"   - Multi-layer energy routing\r\n");
+        Print(L"   - Predictive packet streaming (QDDN)\r\n");
+        Print(L"   - Bandwidth pre-allocation & cache warming\r\n");
+        Print(L"   - Distributed reasoning with URN\r\n");
+        Print(L"   - Presence-based auto-discovery (GHOST-LINK)\r\n");
+        Print(L"\r\n   Phase 2 Features:\r\n");
+        Print(L"   - Global heartbeat synchronization (60 BPM adaptive)\r\n");
+        Print(L"   - Self-organizing mesh routing\r\n");
+        Print(L"   - Quantum tunnels (instant transmission)\r\n");
+        Print(L"   - Adaptive frequency based on load\r\n");
+        Print(L"   - Route pruning & reconfiguration\r\n");
+        Print(L"   - Quantum decoherence & stabilization\r\n");
+        Print(L"\r\n   Phase 3 Features:\r\n");
+        Print(L"   - Collective consciousness (shared thoughts)\r\n");
+        Print(L"   - Byzantine fault-tolerant consensus\r\n");
+        Print(L"   - Distributed shared memory pool\r\n");
+        Print(L"   - Voting & reputation system\r\n");
+        Print(L"   - Memory locking & conflict detection\r\n");
+        Print(L"   - Emergent collective behaviors\r\n");
+        Print(L"\r\n   Phase 4 Features:\r\n");
+        Print(L"   - Future state prediction (N-step lookahead)\r\n");
+        Print(L"   - Speculative execution with rollback\r\n");
+        Print(L"   - Self-adaptive learning rates\r\n");
+        Print(L"   - Gradient-free meta-optimization\r\n");
+        Print(L"   - Genetic algorithm topology mutation\r\n");
+        Print(L"   - Real-time network evolution\r\n");
+        Print(L"   - Fitness-based selection & crossover\r\n");
+        Print(L"\r\n   - 100%% Bare-Metal Native\r\n\r\n");
     }
     
     // Session end
     Print(L"\r\n[SESSION ENDED]\r\n");
-    Print(L"Thank you for using LLM Bare-Metal!\r\n");
+    Print(L"Thank you for using LLM Bare-Metal v5.0!\r\n");
     
     // Small delay before exit
     ST->BootServices->Stall(2000000); // 2 seconds

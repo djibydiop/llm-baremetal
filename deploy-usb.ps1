@@ -36,17 +36,17 @@ Write-Host "[INFO] Creating EFI directory structure..." -ForegroundColor Cyan
 New-Item -Path $EFIBootPath -ItemType Directory -Force | Out-Null
 
 # Build the system first
-Write-Host "`n[INFO] Building LLM system..." -ForegroundColor Cyan
-wsl bash -c "cd /mnt/c/Users/djibi/Desktop/yama_oo/yama_oo/llm-baremetal && make clean && make"
+Write-Host "`n[INFO] Building LLM system with URS v3.0..." -ForegroundColor Cyan
+wsl bash -c "cd /mnt/c/Users/djibi/Desktop/baremetal/llm-baremetal && make clean && make"
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[ERROR] Build failed!" -ForegroundColor Red
     exit 1
 }
 
 # Copy UEFI bootloader
-Write-Host "[INFO] Copying UEFI bootloader..." -ForegroundColor Cyan
-Copy-Item "llama2_efi.efi" -Destination "$EFIBootPath\BOOTX64.EFI" -Force
-Write-Host "  ✓ BOOTX64.EFI copied" -ForegroundColor Green
+Write-Host "[INFO] Copying UEFI bootloader (URS v3.0 + temp 0.9 + penalty)..." -ForegroundColor Cyan
+Copy-Item "llama2.efi" -Destination "$EFIBootPath\BOOTX64.EFI" -Force
+Write-Host "  ✓ BOOTX64.EFI copied (with ML training + quality improvements)" -ForegroundColor Green
 
 # Copy model file - use smaller stories15M for better USB boot compatibility
 Write-Host "[INFO] Copying model (stories15M.bin - 60MB)..." -ForegroundColor Cyan

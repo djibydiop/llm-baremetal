@@ -28,9 +28,9 @@ LLAMA2_OBJ = llama2_efi.o
 # Default target
 all: $(LLAMA2)
 
-# Compile llama2_efi with AVX2 optimizations
+# Compile llama2_efi with SSE2 (QEMU-compatible)
 $(LLAMA2_OBJ): llama2_efi.c
-	$(CC) $(CFLAGS) -mavx2 -mfma -c llama2_efi.c -o $(LLAMA2_OBJ)
+	$(CC) $(CFLAGS) -msse2 -c llama2_efi.c -o $(LLAMA2_OBJ)
 
 # Link llama2_efi
 llama2.so: $(LLAMA2_OBJ)

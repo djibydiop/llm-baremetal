@@ -31,8 +31,10 @@ extern BOOLEAN check_network_available(EFI_SYSTEM_TABLE *SystemTable);
 
 // WiFi Driver declarations
 #include "wifi_ax200.h"
+#include "wifi_firmware.h"
 extern EFI_STATUS wifi_detect_device(EFI_SYSTEM_TABLE *SystemTable, WiFiDevice *device);
 extern void wifi_print_device_info(WiFiDevice *device);
+extern EFI_STATUS wifi_firmware_test_load(EFI_SYSTEM_TABLE *SystemTable, WiFiDevice *device);
 
 // Simple strlen implementation
 static inline int strlen(const char* s) {
@@ -7039,6 +7041,10 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     if (!EFI_ERROR(wifi_status)) {
         Print(L"  [WIFI] Status: ✓ DETECTED (Intel AX200/AX201)\r\n");
         Print(L"  [WIFI] Mode: WiFi 6 (802.11ax) ready\r\n");
+        
+        // Test firmware loading (Week 2-4)
+        Print(L"  [WIFI] Testing firmware loading framework...\r\n");
+        wifi_firmware_test_load(SystemTable, &wifi_device);
     } else {
         Print(L"  [WIFI] Status: Not detected (using wired network)\r\n");
     }

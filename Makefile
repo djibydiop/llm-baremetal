@@ -37,13 +37,17 @@ network_boot.o: network_boot.c
 wifi_ax200.o: wifi_ax200.c wifi_ax200.h
 	$(CC) $(CFLAGS) -msse2 -c wifi_ax200.c -o wifi_ax200.o
 
+# Compile wifi_firmware.c
+wifi_firmware.o: wifi_firmware.c wifi_firmware.h wifi_ax200.h
+	$(CC) $(CFLAGS) -msse2 -c wifi_firmware.c -o wifi_firmware.o
+
 # Compile llama2_efi with SSE2 (QEMU-compatible)
 $(LLAMA2_OBJ): llama2_efi.c
 	$(CC) $(CFLAGS) -msse2 -c llama2_efi.c -o $(LLAMA2_OBJ)
 
-# Link llama2_efi with network_boot and wifi_ax200
-llama2.so: $(LLAMA2_OBJ) network_boot.o wifi_ax200.o
-	ld $(LDFLAGS) $(LLAMA2_OBJ) network_boot.o wifi_ax200.o -o llama2.so $(LIBS)
+# Link llama2_efi with network_boot, wifi_ax200, and wifi_firmware
+llama2.so: $(LLAMA2_OBJ) network_boot.o wifi_ax200.o wifi_firmware.o
+	ld $(LDFLAGS) $(LLAMA2_OBJ) network_boot.o wifi_ax200.o wifi_firmware.o -o llama2.so $(LIBS)
 
 # Convert llama2 to EFI
 $(LLAMA2): llama2.so
@@ -53,7 +57,7 @@ $(LLAMA2): llama2.so
 
 # Clean build artifacts
 clean:
-	rm -f $(LLAMA2_OBJ) network_boot.o wifi_ax200.o llama2.so $(LLAMA2)
+	rm -f $(LLAMA2_OBJ) network_boot.o wifi_ax200.o wifi_firmware.o llama2.so $(LLAMA2)
 
 # Create disk image with stories15M model ONLY
 disk: $(LLAMA2)

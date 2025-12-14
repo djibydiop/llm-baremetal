@@ -7014,14 +7014,20 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     Print(L"  System: UEFI x86_64 | Memory: 512 MB\r\n");
     Print(L"  CPU: SSE2 Optimized | Math: ARM Routines v2.0\r\n");
     Print(L"\r\n");
+    
+    // Check network availability (simplified - check PXE)
+    Print(L"  [NETWORK] Checking for network boot capability...\r\n");
+    // Note: Network Boot will be implemented after MVP testing
+    Print(L"  [NETWORK] Status: DISK BOOT (Network Boot: COMING SOON)\r\n");
+    
     Print(L"\r\n");
     
     Transformer transformer;
     
-    // Load stories110M.bin (INT8 will auto-enable)
+    // Load stories110M.bin (FP32 full precision)
     CHAR16* model_filename = L"stories110M.bin";
     
-    Print(L"\r\n  Loading %s (420 MB)...\r\n", model_filename);
+    Print(L"\r\n  Loading %s (420 MB from disk)...\r\n", model_filename);
     
     EFI_STATUS Status = load_model(ImageHandle, SystemTable, &transformer, model_filename);
     

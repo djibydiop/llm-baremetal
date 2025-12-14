@@ -2,15 +2,31 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/djibydiop/llm-baremetal)
-[![Version](https://img.shields.io/badge/version-6.0.0-blue.svg)](https://github.com/djibydiop/llm-baremetal/releases)
+[![Version](https://img.shields.io/badge/version-7.2.0-blue.svg)](https://github.com/djibydiop/llm-baremetal/releases)
 [![Platform](https://img.shields.io/badge/platform-UEFI%20x86--64-lightgrey.svg)](https://github.com/djibydiop/llm-baremetal)
 [![Made in Senegal](https://img.shields.io/badge/Made%20in-Senegal%20🇸🇳-green.svg)](https://github.com/djibydiop/llm-baremetal)
 
-> **🔥 The world's first Large Language Model running directly on bare-metal hardware. No OS. No kernel. Just raw UEFI + AI.**
+> **🔥 The world's first Large Language Model with Network Boot & WiFi 6 on bare-metal. No OS. No kernel. Just UEFI + AI + Networking.**
 
-**Boot from USB in 5 seconds. Generate text from a 15M parameter transformer. All without an operating system.**
+**Boot from USB in 5 seconds. Download models via HTTP/WiFi. Generate text from 110M parameters. All without an operating system.**
 
-**🎬 [Watch Demo Video](#) • 📖 [Technical Details](#technical-architecture) • 💾 [Download USB Image](https://github.com/djibydiop/llm-baremetal/releases) • ⭐ Star if you find this incredible!**
+**🌐 NEW: Network Boot • 📡 WiFi 6 Driver (Phase 1) • 🧠 110M Model Support**
+
+---
+
+## 🎯 What Makes This TRULY Unique?
+
+This is the **ONLY** project in the world that combines:
+
+- 🌐 **Network Boot** - Download models via HTTP (TCP/IP on bare-metal)
+- 📡 **WiFi 6 Driver** - Intel AX200 driver for bare-metal UEFI (WORLD FIRST)
+- 🧠 **110M Model** - Stories110M (768 dims, 12 layers, 110M params, 418 MB)
+- ⚡ **Boots in 5 seconds** - No OS installation needed
+- 🔥 **Raw UEFI** - Runs before any operating system
+- 🚀 **Real hardware tested** - Works on actual PCs
+- 🇸🇳 **Made in Senegal** - African tech innovation
+
+**UNIQUE**: No other LLM runs on bare-metal with networking. Period.
 
 ---
 
@@ -30,19 +46,29 @@ This is **NOT** just another AI project. This is a **fully functional language m
 ## 🎯 Features
 
 ### Core System
-- ✅ **Bare-Metal LLM** - Stories15M transformer (288 dims, 6 layers, 15M params)
+- ✅ **Network Boot** - Download models via HTTP (TCP4 protocol on UEFI)
+- 📡 **WiFi 6 Driver** - Intel AX200/AX201 bare-metal driver (Phase 1 complete)
+- 🧠 **110M Model** - Stories110M (768 dims, 12 layers, 110M params, 418 MB)
 - ✅ **UEFI Native** - Boots on any modern x86-64 hardware (2010+)
-- ✅ **USB Bootable** - Flash to USB with Rufus and boot instantly
-- ✅ **SSE2 Optimized** - Hardware acceleration for matrix operations
-- ✅ **BPE Tokenizer** - Full 32K SentencePiece vocabulary
-- ✅ **DRC v4.0** - Djibion Reasoner Core for output optimization
+- ✅ **USB Bootable** - Flash to USB and boot instantly
+- ✅ **SSE2 Optimized** - Hardware acceleration for matrix ops
+- ✅ **BPE Tokenizer** - Full 32K vocabulary
+- ✅ **DRC v4.0** - Djibion Reasoner Core
+
+### Network Features (NEW!)
+- 🌐 **HTTP Client** - Complete HTTP/1.0 implementation
+- 📥 **Model Download** - Stream models from remote server
+- 🔄 **Hybrid Boot** - Network → Disk fallback
+- 📡 **WiFi 6** - Intel AX200 driver (in development)
+- 🔐 **WPA2** - Secure WiFi (roadmap)
 
 ### Technical Specs
-- 🧠 **Model**: Stories15M (6 layers × 288 dimensions)
-- 📦 **Size**: 60 MB model + tokenizer
+- 🧠 **Models**: Stories15M (60 MB) + Stories110M (418 MB)
 - ⚡ **Speed**: ~12 tokens/sec on modern hardware
+- 🌐 **Network**: TCP4 + HTTP/1.0 + WiFi 6 (Phase 1)
 - 🔧 **Platform**: UEFI x86_64 (GNU-EFI 3.0+)
-- 💾 **Memory**: 512 MB RAM required
+- 💾 **Memory**: 1024 MB RAM (for 110M model)
+- 📦 **Total Size**: 420 MB (model + tokenizer + code)
 
 ---
 

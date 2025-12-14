@@ -4248,14 +4248,9 @@ EFI_STATUS load_model(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable, Tra
     Print(L"  seq_len=%d, rope_theta=%.0f\r\n", p->seq_len, p->rope_theta);
     
     // PROGRESSIVE OPTIMIZATION: Enable Flash Attention
-    // Auto-enable INT8 for large models (110M+ = 12 layers or more)
-    if (p->n_layers >= 12) {
-        p->int8_enabled = 1;  // Enable INT8 for large models (4x memory reduction)
-        Print(L"  [AUTO] INT8 quantization enabled (large model detected)\r\n");
-    } else {
-        p->int8_enabled = 0;  // Keep FP32 for small models (better quality)
-        Print(L"  [AUTO] FP32 mode (small model - full precision)\r\n");
-    }
+    // INT8 disabled temporarily - quality issues even on 110M
+    p->int8_enabled = 0;  // Keep FP32 for all models (best quality)
+    Print(L"  [MODE] FP32 full precision (INT8 disabled for quality)\r\n");
     
     p->int8_selective = 0;
     p->use_flash_attn = 1;  // Enable Flash Attention (fused softmax)
@@ -7023,11 +7018,10 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     
     Transformer transformer;
     
-    // Auto-detect best available model (110M preferred, fallback to 15M)
-    // For now, just use 15M (110M detection will be added later)
-    CHAR16* model_filename = L"stories15M.bin";
+    // Load stories110M.bin (INT8 will auto-enable)
+    CHAR16* model_filename = L"stories110M.bin";
     
-    Print(L"\r\n  Loading %s...\r\n", model_filename);
+    Print(L"\r\n  Loading %s (420 MB)...\r\n", model_filename);
     
     EFI_STATUS Status = load_model(ImageHandle, SystemTable, &transformer, model_filename);
     

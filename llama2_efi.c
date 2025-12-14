@@ -29,6 +29,11 @@ extern EFI_STATUS http_download_model(
 
 extern BOOLEAN check_network_available(EFI_SYSTEM_TABLE *SystemTable);
 
+// WiFi Driver declarations
+#include "wifi_ax200.h"
+extern EFI_STATUS wifi_detect_device(EFI_SYSTEM_TABLE *SystemTable, WiFiDevice *device);
+extern void wifi_print_device_info(WiFiDevice *device);
+
 // Simple strlen implementation
 static inline int strlen(const char* s) {
     int len = 0;
@@ -7026,8 +7031,20 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     Print(L"  CPU: SSE2 Optimized | Math: ARM Routines v2.0\r\n");
     Print(L"\r\n");
     
-    // Check network availability
-    Print(L"  [NETWORK] Checking network boot capability...\r\n");
+    // Check WiFi capability
+    Print(L"  [WIFI] Checking for Intel WiFi hardware...\r\n");
+    WiFiDevice wifi_device;
+    EFI_STATUS wifi_status = wifi_detect_device(SystemTable, &wifi_device);
+    
+    if (!EFI_ERROR(wifi_status)) {
+        Print(L"  [WIFI] Status: ✓ DETECTED (Intel AX200/AX201)\r\n");
+        Print(L"  [WIFI] Mode: WiFi 6 (802.11ax) ready\r\n");
+    } else {
+        Print(L"  [WIFI] Status: Not detected (using wired network)\r\n");
+    }
+    
+    // Check wired network availability
+    Print(L"  [NETWORK] Checking wired network capability...\r\n");
     BOOLEAN network_available = check_network_available(SystemTable);
     
     if (network_available) {

@@ -29,6 +29,7 @@
 // WiFi states
 typedef enum {
     WIFI_STATE_UNINITIALIZED = 0,
+    WIFI_STATE_DETECTED,            // PCI device detected
     WIFI_STATE_FIRMWARE_LOADING,
     WIFI_STATE_FIRMWARE_LOADED,
     WIFI_STATE_RADIO_ON,

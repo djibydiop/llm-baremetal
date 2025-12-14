@@ -81,3 +81,10 @@ STATUS_REPORT.md
 # Build artifacts
 build*.log
 mnt/
+
+# Build artifacts
+*.o
+*.so
+*.efi
+*.img
+SESSION_*.md

@@ -48,18 +48,21 @@ Write-Host "[INFO] Copying UEFI bootloader (URS v3.0 + temp 0.9 + penalty)..." -
 Copy-Item "llama2.efi" -Destination "$EFIBootPath\BOOTX64.EFI" -Force
 Write-Host "  ✓ BOOTX64.EFI copied (with ML training + quality improvements)" -ForegroundColor Green
 
-# Copy model file - use smaller stories15M for better USB boot compatibility
-Write-Host "[INFO] Copying model (stories15M.bin - 60MB)..." -ForegroundColor Cyan
-if (Test-Path "stories15M.bin") {
-    Copy-Item "stories15M.bin" -Destination "$USBPath\stories15M.bin" -Force
-    Write-Host "  ✓ stories15M.bin copied (better for USB boot)" -ForegroundColor Green
-} elseif (Test-Path "stories110M.bin") {
-    Write-Host "  [WARNING] stories15M.bin not found, using stories110M.bin (may be too large for some UEFI)" -ForegroundColor Yellow
+# Copy model file - use stories110M for better quality (v5.1)
+Write-Host "[INFO] Copying model (stories110M.bin - 418MB)..." -ForegroundColor Cyan
+if (Test-Path "stories110M.bin") {
     Copy-Item "stories110M.bin" -Destination "$USBPath\stories110M.bin" -Force
-    Write-Host "  ✓ stories110M.bin copied (420MB - may timeout on USB boot)" -ForegroundColor Yellow
+    Write-Host "  ✓ stories110M.bin copied (better quality)" -ForegroundColor Green
+} elseif (Test-Path "qemu-test\stories110M.bin") {
+    Copy-Item "qemu-test\stories110M.bin" -Destination "$USBPath\stories110M.bin" -Force
+    Write-Host "  ✓ stories110M.bin copied from qemu-test" -ForegroundColor Green
+} elseif (Test-Path "stories15M.bin") {
+    Write-Host "  [WARNING] stories110M.bin not found, falling back to stories15M.bin" -ForegroundColor Yellow
+    Copy-Item "stories15M.bin" -Destination "$USBPath\stories15M.bin" -Force
+    Write-Host "  ✓ stories15M.bin copied (lower quality)" -ForegroundColor Yellow
 } else {
     Write-Host "  [ERROR] No model file found!" -ForegroundColor Red
-    Write-Host "  Download stories15M.bin (recommended) or stories110M.bin" -ForegroundColor Red
+    Write-Host "  Download stories110M.bin (recommended)" -ForegroundColor Red
 }
 
 # Copy tokenizer
@@ -71,6 +74,46 @@ if (Test-Path "tokenizer.bin") {
     Write-Host "  [WARNING] tokenizer.bin not found!" -ForegroundColor Yellow
 }
 
+# Copy llama2.efi to root for direct access
+Write-Host "[INFO] Copying llama2.efi to root..." -ForegroundColor Cyan
+Copy-Item "llama2.efi" -Destination "$USBPath\llama2.efi" -Force
+Write-Host "  ✓ llama2.efi copied to root" -ForegroundColor Green
+
+# Create startup.nsh for auto-boot
+Write-Host "[INFO] Creating startup.nsh..." -ForegroundColor Cyan
+$startupContent = @"
+@echo -off
+cls
+echo Loading LLM Bare-Metal System v5.1...
+echo.
+fs0:
+cd \
+if exist llama2.efi then
+    llama2.efi
+endif
+echo [ERROR] Bootloader not found!
+"@
+Set-Content -Path "$USBPath\startup.nsh" -Value $startupContent -Force
+Write-Host "  ✓ startup.nsh created (auto-boot script)" -ForegroundColor Green
+
+# Create shell.nsh as alternative
+Write-Host "[INFO] Creating shell.nsh..." -ForegroundColor Cyan
+$shellContent = @"
+@echo -off
+mode 100 40
+cls
+echo ========================================
+echo  LLM Bare-Metal System v5.1
+echo  LLaMA 3 Support - GQA - Optimized
+echo ========================================
+echo.
+echo Starting inference engine...
+echo.
+llama2.efi
+"@
+Set-Content -Path "$USBPath\shell.nsh" -Value $shellContent -Force
+Write-Host "  ✓ shell.nsh created" -ForegroundColor Green
+
 # Create README on USB
 Write-Host "[INFO] Creating README..." -ForegroundColor Cyan
 $readmeContent = @"
@@ -81,8 +124,8 @@ This USB drive contains a complete LLM inference system that boots directly
 on UEFI hardware without an operating system.
 
 Contents:
-- EFI\BOOT\BOOTX64.EFI - UEFI bootloader with LLM implementation
-- stories15M.bin - 15M parameter language model (60MB) - RECOMMENDED for USB boot
+- EFI\BOOT\BOOTX64.EFI - UEFI bootloader with LLM implementation (v5.1 - LLaMA 3 support)
+- stories110M.bin - 110M parameter language model (418MB) - Better quality
 - tokenizer.bin - BPE tokenizer for text encoding/decoding (434KB)
 
 Boot Instructions:
@@ -120,9 +163,13 @@ Write-Host "  ✓ README.txt created" -ForegroundColor Green
 Write-Host "`n=== Deployment Complete ===" -ForegroundColor Green
 Write-Host "USB Drive: $USBPath" -ForegroundColor Cyan
 Write-Host "Files deployed:" -ForegroundColor Cyan
-Write-Host "  - EFI\BOOT\BOOTX64.EFI" -ForegroundColor White
-Write-Host "  - stories15M.bin (60MB) - Optimized for USB boot" -ForegroundColor White
+Write-Host "  - EFI\BOOT\BOOTX64.EFI (v5.1 - LLaMA 3 support)" -ForegroundColor White
+Write-Host "  - llama2.efi (root - direct access)" -ForegroundColor White
+Write-Host "  - stories110M.bin (418MB) - Better quality" -ForegroundColor White
 Write-Host "  - tokenizer.bin (434KB)" -ForegroundColor White
+Write-Host "  - startup.nsh (auto-boot script)" -ForegroundColor White
+Write-Host "  - shell.nsh (alternative boot)" -ForegroundColor White
 Write-Host "  - README.txt" -ForegroundColor White
 Write-Host "`nYou can now boot from this USB drive on any UEFI x86-64 machine!" -ForegroundColor Green
 Write-Host "Remember to disable Secure Boot in BIOS if boot fails." -ForegroundColor Yellow
+Write-Host "`n[v5.1] Features: LLaMA 3 support (rope_theta=500K), GQA, improved sampling" -ForegroundColor Cyan

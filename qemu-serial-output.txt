@@ -1,0 +1,1129 @@
+[2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01HBdsDxe: loading Boot0001 "UEFI QEMU HARDDISK QM00001 " from PciRoot(0x0)/Pci(0x1,0x1)/Ata(Primary,Master,0x0)
+BdsDxe: starting Boot0001 "UEFI QEMU HARDDISK QM00001 " from PciRoot(0x0)/Pci(0x1,0x1)/Ata(Primary,Master,0x0)
+[DEBUG] Checking CPU features...
+[DEBUG] CPUID.1:ECX = 0x80002001
+[DEBUG] XSAVE: 0, AVX: 0
+[INFO] SSE mode (no AVX support)
+[2J[01;01H
+=== LLM BARE-METAL v8.0 - TEST 15M ===
+Running on UEFI Firmware (No OS Required)
+System: UEFI x86-64 | Optimizations: AVX2 + Loop Unrolling
+
+Using stories110M.bin (high quality)...
+
+Initializing Transformer (110M parameters)...
+Loading model: stories110M.bin
+Model config: dim=768, n_layers=12, n_heads=12, n_kv_heads=12, vocab=32000
+  seq_len=1024, rope_theta=0.014551056
+[OPTIMIZED MODE] Flash Attention enabled
+  rope=0., int8=0, flash=1, beam=0, agent=0
+  ... 512 KB read
+  ... 1024 KB read
+  ... 1536 KB read
+  ... 2048 KB read
+  ... 2560 KB read
+  ... 3072 KB read
+  ... 3584 KB read
+  ... 4096 KB read
+  ... 4608 KB read
+  ... 5120 KB read
+  ... 5632 KB read
+  ... 6144 KB read
+  ... 6656 KB read
+  ... 7168 KB read
+  ... 7680 KB read
+  ... 8192 KB read
+  ... 8704 KB read
+  ... 9216 KB read
+  ... 9728 KB read
+  ... 10240 KB read
+  ... 10752 KB read
+  ... 11264 KB read
+  ... 11776 KB read
+  ... 12288 KB read
+  ... 12800 KB read
+  ... 13312 KB read
+  ... 13824 KB read
+  ... 14336 KB read
+  ... 14848 KB read
+  ... 15360 KB read
+  ... 15872 KB read
+  ... 16384 KB read
+  ... 16896 KB read
+  ... 17408 KB read
+  ... 17920 KB read
+  ... 18432 KB read
+  ... 18944 KB read
+  ... 19456 KB read
+  ... 19968 KB read
+  ... 20480 KB read
+  ... 20992 KB read
+  ... 21504 KB read
+  ... 22016 KB read
+  ... 22528 KB read
+  ... 23040 KB read
+  ... 23552 KB read
+  ... 24064 KB read
+  ... 24576 KB read
+  ... 25088 KB read
+  ... 25600 KB read
+  ... 26112 KB read
+  ... 26624 KB read
+  ... 27136 KB read
+  ... 27648 KB read
+  ... 28160 KB read
+  ... 28672 KB read
+  ... 29184 KB read
+  ... 29696 KB read
+  ... 30208 KB read
+  ... 30720 KB read
+  ... 31232 KB read
+  ... 31744 KB read
+  ... 32256 KB read
+  ... 32768 KB read
+  ... 33280 KB read
+  ... 33792 KB read
+  ... 34304 KB read
+  ... 34816 KB read
+  ... 35328 KB read
+  ... 35840 KB read
+  ... 36352 KB read
+  ... 36864 KB read
+  ... 37376 KB read
+  ... 37888 KB read
+  ... 38400 KB read
+  ... 38912 KB read
+  ... 39424 KB read
+  ... 39936 KB read
+  ... 40448 KB read
+  ... 40960 KB read
+  ... 41472 KB read
+  ... 41984 KB read
+  ... 42496 KB read
+  ... 43008 KB read
+  ... 43520 KB read
+  ... 44032 KB read
+  ... 44544 KB read
+  ... 45056 KB read
+  ... 45568 KB read
+  ... 46080 KB read
+  ... 46592 KB read
+  ... 47104 KB read
+  ... 47616 KB read
+  ... 48128 KB read
+  ... 48640 KB read
+  ... 49152 KB read
+  ... 49664 KB read
+  ... 50176 KB read
+  ... 50688 KB read
+  ... 51200 KB read
+  ... 51712 KB read
+  ... 52224 KB read
+  ... 52736 KB read
+  ... 53248 KB read
+  ... 53760 KB read
+  ... 54272 KB read
+  ... 54784 KB read
+  ... 55296 KB read
+  ... 55808 KB read
+  ... 56320 KB read
+  ... 56832 KB read
+  ... 57344 KB read
+  ... 57856 KB read
+  ... 58368 KB read
+  ... 58880 KB read
+  ... 59392 KB read
+  ... 59904 KB read
+  ... 60416 KB read
+  ... 60928 KB read
+  ... 61440 KB read
+  ... 61952 KB read
+  ... 62464 KB read
+  ... 62976 KB read
+  ... 63488 KB read
+  ... 64000 KB read
+  ... 64512 KB read
+  ... 65024 KB read
+  ... 65536 KB read
+  ... 66048 KB read
+  ... 66560 KB read
+  ... 67072 KB read
+  ... 67584 KB read
+  ... 68096 KB read
+  ... 68608 KB read
+  ... 69120 KB read
+  ... 69632 KB read
+  ... 70144 KB read
+  ... 70656 KB read
+  ... 71168 KB read
+  ... 71680 KB read
+  ... 72192 KB read
+  ... 72704 KB read
+  ... 73216 KB read
+  ... 73728 KB read
+  ... 74240 KB read
+  ... 74752 KB read
+  ... 75264 KB read
+  ... 75776 KB read
+  ... 76288 KB read
+  ... 76800 KB read
+  ... 77312 KB read
+  ... 77824 KB read
+  ... 78336 KB read
+  ... 78848 KB read
+  ... 79360 KB read
+  ... 79872 KB read
+  ... 80384 KB read
+  ... 80896 KB read
+  ... 81408 KB read
+  ... 81920 KB read
+  ... 82432 KB read
+  ... 82944 KB read
+  ... 83456 KB read
+  ... 83968 KB read
+  ... 84480 KB read
+  ... 84992 KB read
+  ... 85504 KB read
+  ... 86016 KB read
+  ... 86528 KB read
+  ... 87040 KB read
+  ... 87552 KB read
+  ... 88064 KB read
+  ... 88576 KB read
+  ... 89088 KB read
+  ... 89600 KB read
+  ... 90112 KB read
+  ... 90624 KB read
+  ... 91136 KB read
+  ... 91648 KB read
+  ... 92160 KB read
+  ... 92672 KB read
+  ... 93184 KB read
+  ... 93696 KB read
+  ... 94208 KB read
+  ... 94720 KB read
+  ... 95232 KB read
+  ... 95744 KB read
+  ... 96256 KB read
+  ... 96768 KB read
+  ... 97280 KB read
+  ... 97792 KB read
+  ... 98304 KB read
+  ... 98816 KB read
+  ... 99328 KB read
+  ... 99840 KB read
+  ... 100352 KB read
+  ... 100864 KB read
+  ... 101376 KB read
+  ... 101888 KB read
+  ... 102400 KB read
+  ... 102912 KB read
+  ... 103424 KB read
+  ... 103936 KB read
+  ... 104448 KB read
+  ... 104960 KB read
+  ... 105472 KB read
+  ... 105984 KB read
+  ... 106496 KB read
+  ... 107008 KB read
+  ... 107520 KB read
+  ... 108032 KB read
+  ... 108544 KB read
+  ... 109056 KB read
+  ... 109568 KB read
+  ... 110080 KB read
+  ... 110592 KB read
+  ... 111104 KB read
+  ... 111616 KB read
+  ... 112128 KB read
+  ... 112640 KB read
+  ... 113152 KB read
+  ... 113664 KB read
+  ... 114176 KB read
+  ... 114688 KB read
+  ... 115200 KB read
+  ... 115712 KB read
+  ... 116224 KB read
+  ... 116736 KB read
+  ... 117248 KB read
+  ... 117760 KB read
+  ... 118272 KB read
+  ... 118784 KB read
+  ... 119296 KB read
+  ... 119808 KB read
+  ... 120320 KB read
+  ... 120832 KB read
+  ... 121344 KB read
+  ... 121856 KB read
+  ... 122368 KB read
+  ... 122880 KB read
+  ... 123392 KB read
+  ... 123904 KB read
+  ... 124416 KB read
+  ... 124928 KB read
+  ... 125440 KB read
+  ... 125952 KB read
+  ... 126464 KB read
+  ... 126976 KB read
+  ... 127488 KB read
+  ... 128000 KB read
+  ... 128512 KB read
+  ... 129024 KB read
+  ... 129536 KB read
+  ... 130048 KB read
+  ... 130560 KB read
+  ... 131072 KB read
+  ... 131584 KB read
+  ... 132096 KB read
+  ... 132608 KB read
+  ... 133120 KB read
+  ... 133632 KB read
+  ... 134144 KB read
+  ... 134656 KB read
+  ... 135168 KB read
+  ... 135680 KB read
+  ... 136192 KB read
+  ... 136704 KB read
+  ... 137216 KB read
+  ... 137728 KB read
+  ... 138240 KB read
+  ... 138752 KB read
+  ... 139264 KB read
+  ... 139776 KB read
+  ... 140288 KB read
+  ... 140800 KB read
+  ... 141312 KB read
+  ... 141824 KB read
+  ... 142336 KB read
+  ... 142848 KB read
+  ... 143360 KB read
+  ... 143872 KB read
+  ... 144384 KB read
+  ... 144896 KB read
+  ... 145408 KB read
+  ... 145920 KB read
+  ... 146432 KB read
+  ... 146944 KB read
+  ... 147456 KB read
+  ... 147968 KB read
+  ... 148480 KB read
+  ... 148992 KB read
+  ... 149504 KB read
+  ... 150016 KB read
+  ... 150528 KB read
+  ... 151040 KB read
+  ... 151552 KB read
+  ... 152064 KB read
+  ... 152576 KB read
+  ... 153088 KB read
+  ... 153600 KB read
+  ... 154112 KB read
+  ... 154624 KB read
+  ... 155136 KB read
+  ... 155648 KB read
+  ... 156160 KB read
+  ... 156672 KB read
+  ... 157184 KB read
+  ... 157696 KB read
+  ... 158208 KB read
+  ... 158720 KB read
+  ... 159232 KB read
+  ... 159744 KB read
+  ... 160256 KB read
+  ... 160768 KB read
+  ... 161280 KB read
+  ... 161792 KB read
+  ... 162304 KB read
+  ... 162816 KB read
+  ... 163328 KB read
+  ... 163840 KB read
+  ... 164352 KB read
+  ... 164864 KB read
+  ... 165376 KB read
+  ... 165888 KB read
+  ... 166400 KB read
+  ... 166912 KB read
+  ... 167424 KB read
+  ... 167936 KB read
+  ... 168448 KB read
+  ... 168960 KB read
+  ... 169472 KB read
+  ... 169984 KB read
+  ... 170496 KB read
+  ... 171008 KB read
+  ... 171520 KB read
+  ... 172032 KB read
+  ... 172544 KB read
+  ... 173056 KB read
+  ... 173568 KB read
+  ... 174080 KB read
+  ... 174592 KB read
+  ... 175104 KB read
+  ... 175616 KB read
+  ... 176128 KB read
+  ... 176640 KB read
+  ... 177152 KB read
+  ... 177664 KB read
+  ... 178176 KB read
+  ... 178688 KB read
+  ... 179200 KB read
+  ... 179712 KB read
+  ... 180224 KB read
+  ... 180736 KB read
+  ... 181248 KB read
+  ... 181760 KB read
+  ... 182272 KB read
+  ... 182784 KB read
+  ... 183296 KB read
+  ... 183808 KB read
+  ... 184320 KB read
+  ... 184832 KB read
+  ... 185344 KB read
+  ... 185856 KB read
+  ... 186368 KB read
+  ... 186880 KB read
+  ... 187392 KB read
+  ... 187904 KB read
+  ... 188416 KB read
+  ... 188928 KB read
+  ... 189440 KB read
+  ... 189952 KB read
+  ... 190464 KB read
+  ... 190976 KB read
+  ... 191488 KB read
+  ... 192000 KB read
+  ... 192512 KB read
+  ... 193024 KB read
+  ... 193536 KB read
+  ... 194048 KB read
+  ... 194560 KB read
+  ... 195072 KB read
+  ... 195584 KB read
+  ... 196096 KB read
+  ... 196608 KB read
+  ... 197120 KB read
+  ... 197632 KB read
+  ... 198144 KB read
+  ... 198656 KB read
+  ... 199168 KB read
+  ... 199680 KB read
+  ... 200192 KB read
+  ... 200704 KB read
+  ... 201216 KB read
+  ... 201728 KB read
+  ... 202240 KB read
+  ... 202752 KB read
+  ... 203264 KB read
+  ... 203776 KB read
+  ... 204288 KB read
+  ... 204800 KB read
+  ... 205312 KB read
+  ... 205824 KB read
+  ... 206336 KB read
+  ... 206848 KB read
+  ... 207360 KB read
+  ... 207872 KB read
+  ... 208384 KB read
+  ... 208896 KB read
+  ... 209408 KB read
+  ... 209920 KB read
+  ... 210432 KB read
+  ... 210944 KB read
+  ... 211456 KB read
+  ... 211968 KB read
+  ... 212480 KB read
+  ... 212992 KB read
+  ... 213504 KB read
+  ... 214016 KB read
+  ... 214528 KB read
+  ... 215040 KB read
+  ... 215552 KB read
+  ... 216064 KB read
+  ... 216576 KB read
+  ... 217088 KB read
+  ... 217600 KB read
+  ... 218112 KB read
+  ... 218624 KB read
+  ... 219136 KB read
+  ... 219648 KB read
+  ... 220160 KB read
+  ... 220672 KB read
+  ... 221184 KB read
+  ... 221696 KB read
+  ... 222208 KB read
+  ... 222720 KB read
+  ... 223232 KB read
+  ... 223744 KB read
+  ... 224256 KB read
+  ... 224768 KB read
+  ... 225280 KB read
+  ... 225792 KB read
+  ... 226304 KB read
+  ... 226816 KB read
+  ... 227328 KB read
+  ... 227840 KB read
+  ... 228352 KB read
+  ... 228864 KB read
+  ... 229376 KB read
+  ... 229888 KB read
+  ... 230400 KB read
+  ... 230912 KB read
+  ... 231424 KB read
+  ... 231936 KB read
+  ... 232448 KB read
+  ... 232960 KB read
+  ... 233472 KB read
+  ... 233984 KB read
+  ... 234496 KB read
+  ... 235008 KB read
+  ... 235520 KB read
+  ... 236032 KB read
+  ... 236544 KB read
+  ... 237056 KB read
+  ... 237568 KB read
+  ... 238080 KB read
+  ... 238592 KB read
+  ... 239104 KB read
+  ... 239616 KB read
+  ... 240128 KB read
+  ... 240640 KB read
+  ... 241152 KB read
+  ... 241664 KB read
+  ... 242176 KB read
+  ... 242688 KB read
+  ... 243200 KB read
+  ... 243712 KB read
+  ... 244224 KB read
+  ... 244736 KB read
+  ... 245248 KB read
+  ... 245760 KB read
+  ... 246272 KB read
+  ... 246784 KB read
+  ... 247296 KB read
+  ... 247808 KB read
+  ... 248320 KB read
+  ... 248832 KB read
+  ... 249344 KB read
+  ... 249856 KB read
+  ... 250368 KB read
+  ... 250880 KB read
+  ... 251392 KB read
+  ... 251904 KB read
+  ... 252416 KB read
+  ... 252928 KB read
+  ... 253440 KB read
+  ... 253952 KB read
+  ... 254464 KB read
+  ... 254976 KB read
+  ... 255488 KB read
+  ... 256000 KB read
+  ... 256512 KB read
+  ... 257024 KB read
+  ... 257536 KB read
+  ... 258048 KB read
+  ... 258560 KB read
+  ... 259072 KB read
+  ... 259584 KB read
+  ... 260096 KB read
+  ... 260608 KB read
+  ... 261120 KB read
+  ... 261632 KB read
+  ... 262144 KB read
+  ... 262656 KB read
+  ... 263168 KB read
+  ... 263680 KB read
+  ... 264192 KB read
+  ... 264704 KB read
+  ... 265216 KB read
+  ... 265728 KB read
+  ... 266240 KB read
+  ... 266752 KB read
+  ... 267264 KB read
+  ... 267776 KB read
+  ... 268288 KB read
+  ... 268800 KB read
+  ... 269312 KB read
+  ... 269824 KB read
+  ... 270336 KB read
+  ... 270848 KB read
+  ... 271360 KB read
+  ... 271872 KB read
+  ... 272384 KB read
+  ... 272896 KB read
+  ... 273408 KB read
+  ... 273920 KB read
+  ... 274432 KB read
+  ... 274944 KB read
+  ... 275456 KB read
+  ... 275968 KB read
+  ... 276480 KB read
+  ... 276992 KB read
+  ... 277504 KB read
+  ... 278016 KB read
+  ... 278528 KB read
+  ... 279040 KB read
+  ... 279552 KB read
+  ... 280064 KB read
+  ... 280576 KB read
+  ... 281088 KB read
+  ... 281600 KB read
+  ... 282112 KB read
+  ... 282624 KB read
+  ... 283136 KB read
+  ... 283648 KB read
+  ... 284160 KB read
+  ... 284672 KB read
+  ... 285184 KB read
+  ... 285696 KB read
+  ... 286208 KB read
+  ... 286720 KB read
+  ... 287232 KB read
+  ... 287744 KB read
+  ... 288256 KB read
+  ... 288768 KB read
+  ... 289280 KB read
+  ... 289792 KB read
+  ... 290304 KB read
+  ... 290816 KB read
+  ... 291328 KB read
+  ... 291840 KB read
+  ... 292352 KB read
+  ... 292864 KB read
+  ... 293376 KB read
+  ... 293888 KB read
+  ... 294400 KB read
+  ... 294912 KB read
+  ... 295424 KB read
+  ... 295936 KB read
+  ... 296448 KB read
+  ... 296960 KB read
+  ... 297472 KB read
+  ... 297984 KB read
+  ... 298496 KB read
+  ... 299008 KB read
+  ... 299520 KB read
+  ... 300032 KB read
+  ... 300544 KB read
+  ... 301056 KB read
+  ... 301568 KB read
+  ... 302080 KB read
+  ... 302592 KB read
+  ... 303104 KB read
+  ... 303616 KB read
+  ... 304128 KB read
+  ... 304640 KB read
+  ... 305152 KB read
+  ... 305664 KB read
+  ... 306176 KB read
+  ... 306688 KB read
+  ... 307200 KB read
+  ... 307712 KB read
+  ... 308224 KB read
+  ... 308736 KB read
+  ... 309248 KB read
+  ... 309760 KB read
+  ... 310272 KB read
+  ... 310784 KB read
+  ... 311296 KB read
+  ... 311808 KB read
+  ... 312320 KB read
+  ... 312832 KB read
+  ... 313344 KB read
+  ... 313856 KB read
+  ... 314368 KB read
+  ... 314880 KB read
+  ... 315392 KB read
+  ... 315904 KB read
+  ... 316416 KB read
+  ... 316928 KB read
+  ... 317440 KB read
+  ... 317952 KB read
+  ... 318464 KB read
+  ... 318976 KB read
+  ... 319488 KB read
+  ... 320000 KB read
+  ... 320512 KB read
+  ... 321024 KB read
+  ... 321536 KB read
+  ... 322048 KB read
+  ... 322560 KB read
+  ... 323072 KB read
+  ... 323584 KB read
+  ... 324096 KB read
+  ... 324608 KB read
+  ... 325120 KB read
+  ... 325632 KB read
+  ... 326144 KB read
+  ... 326656 KB read
+  ... 327168 KB read
+  ... 327680 KB read
+  ... 328192 KB read
+  ... 328704 KB read
+  ... 329216 KB read
+  ... 329728 KB read
+  ... 330240 KB read
+  ... 330752 KB read
+  ... 331264 KB read
+  ... 331776 KB read
+  ... 332288 KB read
+  ... 332800 KB read
+  ... 333312 KB read
+  ... 333824 KB read
+  ... 334336 KB read
+  ... 334848 KB read
+  ... 335360 KB read
+  ... 335872 KB read
+  ... 336384 KB read
+  ... 336896 KB read
+  ... 337408 KB read
+  ... 337920 KB read
+  ... 338432 KB read
+  ... 338944 KB read
+  ... 339456 KB read
+  ... 339968 KB read
+  ... 340480 KB read
+  ... 340992 KB read
+  ... 341504 KB read
+  ... 342016 KB read
+  ... 342528 KB read
+  ... 343040 KB read
+  ... 343552 KB read
+  ... 344064 KB read
+  ... 344576 KB read
+  ... 345088 KB read
+  ... 345600 KB read
+  ... 346112 KB read
+  ... 346624 KB read
+  ... 347136 KB read
+  ... 347648 KB read
+  ... 348160 KB read
+  ... 348672 KB read
+  ... 349184 KB read
+  ... 349696 KB read
+  ... 350208 KB read
+  ... 350720 KB read
+  ... 351232 KB read
+  ... 351744 KB read
+  ... 352256 KB read
+  ... 352768 KB read
+  ... 353280 KB read
+  ... 353792 KB read
+  ... 354304 KB read
+  ... 354816 KB read
+  ... 355328 KB read
+  ... 355840 KB read
+  ... 356352 KB read
+  ... 356864 KB read
+  ... 357376 KB read
+  ... 357888 KB read
+  ... 358400 KB read
+  ... 358912 KB read
+  ... 359424 KB read
+  ... 359936 KB read
+  ... 360448 KB read
+  ... 360960 KB read
+  ... 361472 KB read
+  ... 361984 KB read
+  ... 362496 KB read
+  ... 363008 KB read
+  ... 363520 KB read
+  ... 364032 KB read
+  ... 364544 KB read
+  ... 365056 KB read
+  ... 365568 KB read
+  ... 366080 KB read
+  ... 366592 KB read
+  ... 367104 KB read
+  ... 367616 KB read
+  ... 368128 KB read
+  ... 368640 KB read
+  ... 369152 KB read
+  ... 369664 KB read
+  ... 370176 KB read
+  ... 370688 KB read
+  ... 371200 KB read
+  ... 371712 KB read
+  ... 372224 KB read
+  ... 372736 KB read
+  ... 373248 KB read
+  ... 373760 KB read
+  ... 374272 KB read
+  ... 374784 KB read
+  ... 375296 KB read
+  ... 375808 KB read
+  ... 376320 KB read
+  ... 376832 KB read
+  ... 377344 KB read
+  ... 377856 KB read
+  ... 378368 KB read
+  ... 378880 KB read
+  ... 379392 KB read
+  ... 379904 KB read
+  ... 380416 KB read
+  ... 380928 KB read
+  ... 381440 KB read
+  ... 381952 KB read
+  ... 382464 KB read
+  ... 382976 KB read
+  ... 383488 KB read
+  ... 384000 KB read
+  ... 384512 KB read
+  ... 385024 KB read
+  ... 385536 KB read
+  ... 386048 KB read
+  ... 386560 KB read
+  ... 387072 KB read
+  ... 387584 KB read
+  ... 388096 KB read
+  ... 388608 KB read
+  ... 389120 KB read
+  ... 389632 KB read
+  ... 390144 KB read
+  ... 390656 KB read
+  ... 391168 KB read
+  ... 391680 KB read
+  ... 392192 KB read
+  ... 392704 KB read
+  ... 393216 KB read
+  ... 393728 KB read
+  ... 394240 KB read
+  ... 394752 KB read
+  ... 395264 KB read
+  ... 395776 KB read
+  ... 396288 KB read
+  ... 396800 KB read
+  ... 397312 KB read
+  ... 397824 KB read
+  ... 398336 KB read
+  ... 398848 KB read
+  ... 399360 KB read
+  ... 399872 KB read
+  ... 400384 KB read
+  ... 400896 KB read
+  ... 401408 KB read
+  ... 401920 KB read
+  ... 402432 KB read
+  ... 402944 KB read
+  ... 403456 KB read
+  ... 403968 KB read
+  ... 404480 KB read
+  ... 404992 KB read
+  ... 405504 KB read
+  ... 406016 KB read
+  ... 406528 KB read
+  ... 407040 KB read
+  ... 407552 KB read
+  ... 408064 KB read
+  ... 408576 KB read
+  ... 409088 KB read
+  ... 409600 KB read
+  ... 410112 KB read
+  ... 410624 KB read
+  ... 411136 KB read
+  ... 411648 KB read
+  ... 412160 KB read
+  ... 412672 KB read
+  ... 413184 KB read
+  ... 413696 KB read
+  ... 414208 KB read
+  ... 414720 KB read
+  ... 415232 KB read
+  ... 415744 KB read
+  ... 416256 KB read
+  ... 416768 KB read
+  ... 417280 KB read
+  ... 417792 KB read
+  ... 418304 KB read
+  ... 418816 KB read
+  ... 419328 KB read
+  ... 419840 KB read
+  ... 420352 KB read
+  ... 420864 KB read
+  ... 421376 KB read
+  ... 421888 KB read
+  ... 422400 KB read
+  ... 422912 KB read
+  ... 423424 KB read
+  ... 423936 KB read
+  ... 424448 KB read
+  ... 424960 KB read
+  ... 425472 KB read
+  ... 425984 KB read
+  ... 426496 KB read
+  ... 427008 KB read
+  ... 427520 KB read
+  Allocating x (3072 bytes)...
+  Allocating xb (3072 bytes)...
+  Allocating xb2 (3072 bytes)...
+  Allocating hb (8192 bytes)...
+  Allocating hb2 (8192 bytes)...
+  Allocating q (3072 bytes)...
+  Allocating k (3072 bytes)...
+  Allocating v (3072 bytes)...
+  Allocating key_cache (37748736 bytes)...
+  Allocating value_cache (37748736 bytes)...
+  Allocating att (49152 bytes)...
+  Allocating logits (128000 bytes)...
+  Zeroing KV cache...
+  KV cache zeroed!
+[SUCCESS] Model loaded successfully!
+[SUCCESS] Model loaded successfully! (427 MB)
+Loading BPE tokenizer...
+Tokenizer loaded: 32000 tokens, max_len=27
+[SUCCESS] Tokenizer loaded (32000 tokens)
+
+╔═════════════════════════════════════════════════════════════════╗
+║  LlamaUltimate v7.2 SPECULATIVE - 2-3x Speed with Draft   ║
+╚═════════════════════════════════════════════════════════════════╝
+������ Model: Stories110M (768 dim, 12 layers, 110M params)
+✨ Sampling: Elite (Mirostat+Top-k+Min-p+Ngram) + Agent + Beam
+⚡ Performance: Flash+INT8+Speculative+8xMatMul+4xRMSNorm+RoPE
+������ Speculative: Draft(15M) → Verify(110M) → 2-3x Speedup
+������ Bench: Metrics + INT8 tracking + Acceptance rate
+(Interactive mode - Type your questions, Enter to send)
+
+=== Story Generation (110M model, temp=0.8) ===
+
+Story:
+╔════════════════════════════════════════════════════════════════╗
+║ [DRC] PERFORMANCE TEST - Minimal DRC overhead                  ║
+║ decode_token() SAFE + Layer diagnostics ENABLED               ║
+╚════════════════════════════════════════════════════════════════╝
+
+
+[LOOP] Starting iteration pos=0/150
+[FORWARD-ENTRY] pos=0 token=1
+[FORWARD-LAYER] pos=0 layer=0/12
+[FORWARD-LAYER] pos=0 layer=1/12
+[FORWARD-LAYER] pos=0 layer=2/12
+[FORWARD-LAYER] pos=0 layer=3/12
+[FORWARD-LAYER] pos=0 layer=4/12
+[FORWARD-LAYER] pos=0 layer=5/12
+[FORWARD-LAYER] pos=0 layer=6/12
+[FORWARD-LAYER] pos=0 layer=7/12
+[FORWARD-LAYER] pos=0 layer=8/12
+[FORWARD-LAYER] pos=0 layer=9/12
+[FORWARD-LAYER] pos=0 layer=10/12
+[FORWARD-LAYER] pos=0 layer=11/12
+[LOOP] Forward pass OK at pos=0, logits=?
+[DEBUG] SKIPPED drc_analyze_distribution pos=0
+[DEBUG] Before sampling pos=0
+[DEBUG] After sampling pos=0 next=15809
+[pos=0 in=1 out=15809] top3=[0,11,15]
+[DEBUG] Before decode pos=0 token=15809
+[DEBUG] After decode pos=0 piece=?
+Generic[DEBUG] End of iteration pos=0, next token=15809
+[FORWARD-ENTRY] pos=1 token=15809
+[FORWARD-LAYER] pos=1 layer=0/12
+[FORWARD-LAYER] pos=1 layer=1/12
+[FORWARD-LAYER] pos=1 layer=2/12
+[FORWARD-LAYER] pos=1 layer=3/12
+[FORWARD-LAYER] pos=1 layer=4/12
+[FORWARD-LAYER] pos=1 layer=5/12
+[FORWARD-LAYER] pos=1 layer=6/12
+[FORWARD-LAYER] pos=1 layer=7/12
+[FORWARD-LAYER] pos=1 layer=8/12
+[FORWARD-LAYER] pos=1 layer=9/12
+[FORWARD-LAYER] pos=1 layer=10/12
+[FORWARD-LAYER] pos=1 layer=11/12
+[LOOP] Forward pass OK at pos=1, logits=?
+[DEBUG] SKIPPED drc_analyze_distribution pos=1
+[DEBUG] Before sampling pos=1
+[DEBUG] After sampling pos=1 next=11954
+[pos=1 in=15809 out=11954] top3=[0,11,26]
+[DEBUG] Before decode pos=1 token=11954
+[DEBUG] After decode pos=1 piece=?
+esen[DEBUG] End of iteration pos=1, next token=11954
+[FORWARD-ENTRY] pos=2 token=11954
+[FORWARD-LAYER] pos=2 layer=0/12
+[FORWARD-LAYER] pos=2 layer=1/12
+[FORWARD-LAYER] pos=2 layer=2/12
+[FORWARD-LAYER] pos=2 layer=3/12
+[FORWARD-LAYER] pos=2 layer=4/12
+[FORWARD-LAYER] pos=2 layer=5/12
+[FORWARD-LAYER] pos=2 layer=6/12
+[FORWARD-LAYER] pos=2 layer=7/12
+[FORWARD-LAYER] pos=2 layer=8/12
+[FORWARD-LAYER] pos=2 layer=9/12
+[FORWARD-LAYER] pos=2 layer=10/12
+[FORWARD-LAYER] pos=2 layer=11/12
+[LOOP] Forward pass OK at pos=2, logits=?
+[DEBUG] SKIPPED drc_analyze_distribution pos=2
+[DEBUG] Before sampling pos=2
+[DEBUG] After sampling pos=2 next=15415
+[pos=2 in=11954 out=15415] top3=[0,11,56]
+[DEBUG] Before decode pos=2 token=15415
+[DEBUG] After decode pos=2 piece=?
+cknow[DEBUG] End of iteration pos=2, next token=15415
+[FORWARD-ENTRY] pos=3 token=15415
+[FORWARD-LAYER] pos=3 layer=0/12
+[FORWARD-LAYER] pos=3 layer=1/12
+[FORWARD-LAYER] pos=3 layer=2/12
+[FORWARD-LAYER] pos=3 layer=3/12
+[FORWARD-LAYER] pos=3 layer=4/12
+[FORWARD-LAYER] pos=3 layer=5/12
+[FORWARD-LAYER] pos=3 layer=6/12
+[FORWARD-LAYER] pos=3 layer=7/12
+[FORWARD-LAYER] pos=3 layer=8/12
+[FORWARD-LAYER] pos=3 layer=9/12
+[FORWARD-LAYER] pos=3 layer=10/12
+[FORWARD-LAYER] pos=3 layer=11/12
+[LOOP] Forward pass OK at pos=3, logits=?
+[DEBUG] SKIPPED drc_analyze_distribution pos=3
+[DEBUG] Before sampling pos=3
+[DEBUG] After sampling pos=3 next=7187
+[pos=3 in=15415 out=7187] top3=[0,11,56]
+[DEBUG] Before decode pos=3 token=7187
+[DEBUG] After decode pos=3 piece=?
+SC[DEBUG] End of iteration pos=3, next token=7187
+[FORWARD-ENTRY] pos=4 token=7187
+[FORWARD-LAYER] pos=4 layer=0/12
+[FORWARD-LAYER] pos=4 layer=1/12
+[FORWARD-LAYER] pos=4 layer=2/12
+[FORWARD-LAYER] pos=4 layer=3/12
+[FORWARD-LAYER] pos=4 layer=4/12
+[FORWARD-LAYER] pos=4 layer=5/12
+[FORWARD-LAYER] pos=4 layer=6/12
+[FORWARD-LAYER] pos=4 layer=7/12
+[FORWARD-LAYER] pos=4 layer=8/12
+[FORWARD-LAYER] pos=4 layer=9/12
+[FORWARD-LAYER] pos=4 layer=10/12
+[FORWARD-LAYER] pos=4 layer=11/12
+[LOOP] Forward pass OK at pos=4, logits=?
+[DEBUG] SKIPPED drc_analyze_distribution pos=4
+[DEBUG] Before sampling pos=4
+[DEBUG] After sampling pos=4 next=495
+[pos=4 in=7187 out=495] top3=[0,11,56]
+[DEBUG] Before decode pos=4 token=495
+[DEBUG] After decode pos=4 piece=?
+ber[DEBUG] End of iteration pos=4, next token=495
+[LOOP] Starting iteration pos=5/150
+[FORWARD-ENTRY] pos=5 token=495
+[FORWARD-DEBUG] dim=768 kv_dim=768 hidden_dim=2048 head_size=64
+[FORWARD-DEBUG] n_layers=12 seq_len=1024 vocab_size=32000
+[FORWARD-LAYER] pos=5 layer=0/12
+[FORWARD-LAYER] pos=5 layer=1/12
+[FORWARD-LAYER] pos=5 layer=2/12
+[FORWARD-LAYER] pos=5 layer=3/12
+[FORWARD-LAYER] pos=5 layer=4/12
+[FORWARD-LAYER] pos=5 layer=5/12
+[FORWARD-LAYER] pos=5 layer=6/12
+[FORWARD-LAYER] pos=5 layer=7/12
+[FORWARD-LAYER] pos=5 layer=8/12
+[FORWARD-LAYER] pos=5 layer=9/12
+[FORWARD-LAYER] pos=5 layer=10/12
+[FORWARD-LAYER] pos=5 layer=11/12
+[LOOP] Forward pass OK at pos=5, logits=?
+[DEBUG] SKIPPED drc_analyze_distribution pos=5
+[DEBUG] Before sampling pos=5
+[DEBUG] After sampling pos=5 next=15235
+[DEBUG] Before decode pos=5 token=15235
+[DEBUG] After decode pos=5 piece=?
+Ð´ÑÐ²[DEBUG] End of iteration pos=5, next token=15235
+[FORWARD-ENTRY] pos=6 token=15235
+[FORWARD-LAYER] pos=6 layer=0/12
+[FORWARD-LAYER] pos=6 layer=1/12
+[FORWARD-LAYER] pos=6 layer=2/12
+[FORWARD-LAYER] pos=6 layer=3/12
+[FORWARD-LAYER] pos=6 layer=4/12
+[FORWARD-LAYER] pos=6 layer=5/12
+[FORWARD-LAYER] pos=6 layer=6/12
+[FORWARD-LAYER] pos=6 layer=7/12
+[FORWARD-LAYER] pos=6 layer=8/12
+[FORWARD-LAYER] pos=6 layer=9/12
+[FORWARD-LAYER] pos=6 layer=10/12
+[FORWARD-LAYER] pos=6 layer=11/12
+[LOOP] Forward pass OK at pos=6, logits=?
+[DEBUG] SKIPPED drc_analyze_distribution pos=6
+[DEBUG] Before sampling pos=6
+[DEBUG] After sampling pos=6 next=10788
+[DEBUG] Before decode pos=6 token=10788
+[DEBUG] After decode pos=6 piece=?
+ oblig[DEBUG] End of iteration pos=6, next token=10788
+[FORWARD-ENTRY] pos=7 token=10788
+[FORWARD-LAYER] pos=7 layer=0/12
+[FORWARD-LAYER] pos=7 layer=1/12
+[FORWARD-LAYER] pos=7 layer=2/12
+[FORWARD-LAYER] pos=7 layer=3/12
+[FORWARD-LAYER] pos=7 layer=4/12
+[FORWARD-LAYER] pos=7 layer=5/12
+[FORWARD-LAYER] pos=7 layer=6/12
+[FORWARD-LAYER] pos=7 layer=7/12
+[FORWARD-LAYER] pos=7 layer=8/12
+[FORWARD-LAYER] pos=7 layer=9/12
+[FORWARD-LAYER] pos=7 layer=10/12
+[FORWARD-LAYER] pos=7 layer=11/12
+[LOOP] Forward pass OK at pos=7, logits=?
+[DEBUG] SKIPPED drc_analyze_distribution pos=7
+[DEBUG] Before sampling pos=7
+[DEBUG] After sampling pos=7 next=19204
+[DEBUG] Before decode pos=7 token=19204
+[DEBUG] After decode pos=7 piece=?
+Series[DEBUG] End of iteration pos=7, next token=19204
+[FORWARD-ENTRY] pos=8 token=19204
+[FORWARD-LAYER] pos=8 layer=0/12
+[FORWARD-LAYER] pos=8 layer=1/12
+[FORWARD-LAYER] pos=8 layer=2/12
+[FORWARD-LAYER] pos=8 layer=3/12
+[FORWARD-LAYER] pos=8 layer=4/12
+[FORWARD-LAYER] pos=8 layer=5/12
+[FORWARD-LAYER] pos=8 layer=6/12
+[FORWARD-LAYER] pos=8 layer=7/12
+[FORWARD-LAYER] pos=8 layer=8/12
+[FORWARD-LAYER] pos=8 layer=9/12
+[FORWARD-LAYER] pos=8 layer=10/12
+[FORWARD-LAYER] pos=8 layer=11/12
+[LOOP] Forward pass OK at pos=8, logits=?
+[DEBUG] SKIPPED drc_analyze_distribution pos=8
+[DEBUG] Before sampling pos=8
+[DEBUG] After sampling pos=8 next=12954
+[DEBUG] Before decode pos=8 token=12954
+[DEBUG] After decode pos=8 piece=?
+ oc[DEBUG] End of iteration pos=8, next token=12954
+[FORWARD-ENTRY] pos=9 token=12954
+[FORWARD-LAYER] pos=9 layer=0/12
+[FORWARD-LAYER] pos=9 layer=1/12
+[FORWARD-LAYER] pos=9 layer=2/12
+[FORWARD-LAYER] pos=9 layer=3/12
+[FORWARD-LAYER] pos=9 layer=4/12
+[FORWARD-LAYER] pos=9 layer=5/12
+[FORWARD-LAYER] pos=9 layer=6/12
+[FORWARD-LAYER] pos=9 layer=7/12
+[FORWARD-LAYER] pos=9 layer=8/12
+[FORWARD-LAYER] pos=9 layer=9/12
+[FORWARD-LAYER] pos=9 layer=10/12
+[FORWARD-LAYER] pos=9 layer=11/12
+[LOOP] Forward pass OK at pos=9, logits=?
+[DEBUG] SKIPPED drc_analyze_distribution pos=9
+[DEBUG] Before sampling pos=9
+[DEBUG] After sampling pos=9 next=1437
+[DEBUG] Before decode pos=9 token=1437
+[DEBUG] After decode pos=9 piece=?
+ dÃ©[DEBUG] End of iteration pos=9, next token=1437
+[LOOP] Starting iteration pos=10/150
+[FORWARD-ENTRY] pos=10 token=1437
+[FORWARD-LAYER] pos=10 layer=0/12
+[FORWARD-LAYER] pos=10 layer=1/12
+[FORWARD-LAYER] pos=10 layer=2/12
+[FORWARD-LAYER] pos=10 layer=3/12
+[FORWARD-LAYER] pos=10 layer=4/12
+[FORWARD-LAYER] pos=10 layer=5/12
+[FORWARD-LAYER] pos=10 layer=6/12
+[FORWARD-LAYER] pos=10 layer=7/12
+[FORWARD-LAYER] pos=10 layer=8/12
+[FORWARD-LAYER] pos=10 layer=9/12
+[FORWARD-LAYER] pos=10 layer=10/12
+[FORWARD-LAYER] pos=10 layer=11/12
+[LOOP] Forward pass OK at pos=10, logits=?
+Ð²Ð°Ð½[LOOP] Forward pass OK at pos=11, logits=?
+ leng[LOOP] Forward pass OK at pos=12, logits=?
+Extension[LOOP] Forward pass OK at pos=13, logits=?
+usalem[LOOP] Forward pass OK at pos=14, logits=?
+ possession[LOOP] Starting iteration pos=15/150
+Fern Dic nouSO trÃ¨s[LOOP] Starting iteration pos=20/150
+à¹NumberavesÑÐºÐµ ÑÐ¾Ð¾ÑÐ²ÐµÑ[LOOP] Starting iteration pos=25/150
+ Sing Medien ÑÐµÑÑÑ vbÑÐ½Ñ[LOOP] Starting iteration pos=30/150
+ Israel lle Ð£ÐºÑÐ°On ganz[LOOP] Starting iteration pos=35/150
+eri frÃ¼ seinVOFlags[LOOP] Starting iteration pos=40/150
+rictagemcus factor oktÃ³ber[LOOP] Starting iteration pos=45/150
+ Agricultnx KÃ¶nig

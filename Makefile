@@ -29,13 +29,17 @@ LLAMA2_OBJ = llama2_efi.o
 # Default target
 all: $(LLAMA2)
 
+# Compile network_boot.c
+network_boot.o: network_boot.c
+	$(CC) $(CFLAGS) -msse2 -c network_boot.c -o network_boot.o
+
 # Compile llama2_efi with SSE2 (QEMU-compatible)
 $(LLAMA2_OBJ): llama2_efi.c
 	$(CC) $(CFLAGS) -msse2 -c llama2_efi.c -o $(LLAMA2_OBJ)
 
-# Link llama2_efi
-llama2.so: $(LLAMA2_OBJ)
-	ld $(LDFLAGS) $(LLAMA2_OBJ) -o llama2.so $(LIBS)
+# Link llama2_efi with network_boot
+llama2.so: $(LLAMA2_OBJ) network_boot.o
+	ld $(LDFLAGS) $(LLAMA2_OBJ) network_boot.o -o llama2.so $(LIBS)
 
 # Convert llama2 to EFI
 $(LLAMA2): llama2.so
@@ -45,7 +49,7 @@ $(LLAMA2): llama2.so
 
 # Clean build artifacts
 clean:
-	rm -f $(LLAMA2_OBJ) llama2.so $(LLAMA2)
+	rm -f $(LLAMA2_OBJ) network_boot.o llama2.so $(LLAMA2)
 
 # Create disk image with stories15M model ONLY
 disk: $(LLAMA2)

@@ -18,6 +18,17 @@
 float logf(float x);
 uint32_t rand_efi(void);
 
+// Network Boot declarations
+extern EFI_STATUS http_download_model(
+    EFI_HANDLE ImageHandle,
+    EFI_SYSTEM_TABLE *SystemTable,
+    const CHAR8* url_str,
+    VOID** model_buffer,
+    UINTN* model_size
+);
+
+extern BOOLEAN check_network_available(EFI_SYSTEM_TABLE *SystemTable);
+
 // Simple strlen implementation
 static inline int strlen(const char* s) {
     int len = 0;
@@ -7015,31 +7026,146 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     Print(L"  CPU: SSE2 Optimized | Math: ARM Routines v2.0\r\n");
     Print(L"\r\n");
     
-    // Check network availability (simplified - check PXE)
-    Print(L"  [NETWORK] Checking for network boot capability...\r\n");
-    // Note: Network Boot will be implemented after MVP testing
-    Print(L"  [NETWORK] Status: DISK BOOT (Network Boot: COMING SOON)\r\n");
+    // Check network availability
+    Print(L"  [NETWORK] Checking network boot capability...\r\n");
+    BOOLEAN network_available = check_network_available(SystemTable);
+    
+    if (network_available) {
+        Print(L"  [NETWORK] Status: ✓ AVAILABLE (TCP/IP stack detected)\r\n");
+        Print(L"  [NETWORK] Mode: HYBRID (Network Boot with disk fallback)\r\n");
+    } else {
+        Print(L"  [NETWORK] Status: DISK BOOT ONLY (No network stack)\r\n");
+    }
     
     Print(L"\r\n");
     
     Transformer transformer;
     
-    // Load stories110M.bin (FP32 full precision)
+    // Model configuration
     CHAR16* model_filename = L"stories110M.bin";
+    const CHAR8* network_url = "http://10.0.2.2:8080/stories110M.bin";
     
-    Print(L"\r\n  Loading %s (420 MB from disk)...\r\n", model_filename);
+    VOID* model_data = NULL;
+    UINTN model_size = 0;
+    BOOLEAN loaded_from_network = FALSE;
     
-    EFI_STATUS Status = load_model(ImageHandle, SystemTable, &transformer, model_filename);
-    
-    if (EFI_ERROR(Status)) {
-        Print(L"[ERROR] Failed to load stories15M.bin!\r\n");
-        Print(L"   Status: %r\r\n", Status);
-        Print(L"\r\n[FATAL] System will halt in 5 seconds...\r\n");
-        ST->BootServices->Stall(5000000);
-        return Status;
+    // Try network boot first if available
+    if (network_available) {
+        Print(L"\r\n  [NETWORK BOOT] Attempting HTTP download...\r\n");
+        Print(L"  URL: %a\r\n", network_url);
+        Print(L"\r\n");
+        
+        EFI_STATUS net_status = http_download_model(
+            ImageHandle,
+            SystemTable,
+            network_url,
+            &model_data,
+            &model_size
+        );
+        
+        if (!EFI_ERROR(net_status)) {
+            loaded_from_network = TRUE;
+            Print(L"\r\n  [SUCCESS] Model loaded via Network Boot!\r\n");
+            Print(L"  Size: %d bytes (%.1f MB)\r\n", 
+                  model_size, (float)model_size / (1024.0f * 1024.0f));
+        } else {
+            Print(L"\r\n  [NETWORK] Download failed, falling back to disk...\r\n");
+        }
     }
     
-    Print(L"  Model loaded successfully!\r\n");
+    // Fallback to disk if network failed or unavailable
+    EFI_STATUS Status = EFI_SUCCESS;
+    
+    if (!loaded_from_network) {
+        Print(L"\r\n  Loading %s (420 MB from disk)...\r\n", model_filename);
+        
+        Status = load_model(ImageHandle, SystemTable, &transformer, model_filename);
+        
+        if (EFI_ERROR(Status)) {
+            Print(L"[ERROR] Failed to load %s!\r\n", model_filename);
+            Print(L"   Status: %r\r\n", Status);
+            Print(L"\r\n[FATAL] System will halt in 5 seconds...\r\n");
+            ST->BootServices->Stall(5000000);
+            return Status;
+        }
+        
+        Print(L"  Model loaded successfully from disk!\r\n");
+    } else {
+        // Parse network-loaded model
+        Print(L"\r\n  Parsing network model data...\r\n");
+        
+        // Model data format: [config][weights]
+        // Config: 7 x int32 (28 bytes)
+        if (model_size < 28) {
+            Print(L"[ERROR] Invalid model file (too small)\r\n");
+            if (model_data) FreePool(model_data);
+            return EFI_INVALID_PARAMETER;
+        }
+        
+        int* config_data = (int*)model_data;
+        transformer.config.dim = config_data[0];
+        transformer.config.hidden_dim = config_data[1];
+        transformer.config.n_layers = config_data[2];
+        transformer.config.n_heads = config_data[3];
+        transformer.config.n_kv_heads = config_data[4];
+        transformer.config.vocab_size = config_data[5];
+        transformer.config.seq_len = config_data[6];
+        
+        Print(L"  Config: dim=%d, layers=%d, heads=%d, vocab=%d\r\n",
+              transformer.config.dim, transformer.config.n_layers,
+              transformer.config.n_heads, transformer.config.vocab_size);
+        
+        // Weights start after config (28 bytes = 7 x int32)
+        float* weights_ptr = (float*)((char*)model_data + 28);
+        
+        // Map weight pointers manually (same logic as load_model)
+        int head_size = transformer.config.dim / transformer.config.n_heads;
+        unsigned long long n_layers = transformer.config.n_layers;
+        
+        transformer.weights.token_embedding_table = weights_ptr;
+        weights_ptr += transformer.config.vocab_size * transformer.config.dim;
+        
+        transformer.weights.rms_att_weight = weights_ptr;
+        weights_ptr += n_layers * transformer.config.dim;
+        
+        transformer.weights.wq = weights_ptr;
+        weights_ptr += n_layers * transformer.config.dim * (transformer.config.n_heads * head_size);
+        
+        transformer.weights.wk = weights_ptr;
+        weights_ptr += n_layers * transformer.config.dim * (transformer.config.n_kv_heads * head_size);
+        
+        transformer.weights.wv = weights_ptr;
+        weights_ptr += n_layers * transformer.config.dim * (transformer.config.n_kv_heads * head_size);
+        
+        transformer.weights.wo = weights_ptr;
+        weights_ptr += n_layers * (transformer.config.n_heads * head_size) * transformer.config.dim;
+        
+        transformer.weights.rms_ffn_weight = weights_ptr;
+        weights_ptr += n_layers * transformer.config.dim;
+        
+        transformer.weights.w1 = weights_ptr;
+        weights_ptr += n_layers * transformer.config.dim * transformer.config.hidden_dim;
+        
+        transformer.weights.w2 = weights_ptr;
+        weights_ptr += n_layers * transformer.config.hidden_dim * transformer.config.dim;
+        
+        transformer.weights.w3 = weights_ptr;
+        weights_ptr += n_layers * transformer.config.dim * transformer.config.hidden_dim;
+        
+        transformer.weights.rms_final_weight = weights_ptr;
+        weights_ptr += transformer.config.dim;
+        
+        // wcls (classifier) might be shared with token_embedding_table
+        int shared_weights = 1;  // Assume shared for stories models
+        if (!shared_weights) {
+            transformer.weights.wcls = weights_ptr;
+        } else {
+            transformer.weights.wcls = transformer.weights.token_embedding_table;
+        }
+        
+        Print(L"  Model parsed successfully from network!\r\n");
+    }
+    
     Print(L"\r\n");
     
     transformer.config.model_type = MODEL_STORIES15M;

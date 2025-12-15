@@ -7065,15 +7065,15 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     Transformer transformer;
     
     // Model configuration
-    CHAR16* model_filename = L"stories110M.bin";
-    const CHAR8* network_url = "http://10.0.2.2:8080/stories110M.bin";
+    CHAR16* model_filename = L"stories15M.bin";
+    const CHAR8* network_url = "http://10.0.2.2:8080/stories15M.bin";
     
     VOID* model_data = NULL;
     UINTN model_size = 0;
     BOOLEAN loaded_from_network = FALSE;
     
-    // Try network boot first if available
-    if (network_available) {
+    // Try network boot first if available (DISABLED for now - use disk)
+    if (0 && network_available) {
         Print(L"\r\n  [NETWORK BOOT] Attempting HTTP download...\r\n");
         Print(L"  URL: %a\r\n", network_url);
         Print(L"\r\n");

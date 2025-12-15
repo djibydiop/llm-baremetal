@@ -36,6 +36,15 @@ extern EFI_STATUS wifi_detect_device(EFI_SYSTEM_TABLE *SystemTable, WiFiDevice *
 extern void wifi_print_device_info(WiFiDevice *device);
 extern EFI_STATUS wifi_firmware_test_load(EFI_SYSTEM_TABLE *SystemTable, WiFiDevice *device);
 
+// URS - Unité de Raisonnement Spéculatif
+#include "drc_core.h"
+extern EFI_STATUS drc_reasoning_init(DRCCore* drc);
+extern EFI_STATUS urs_generate_hypotheses(URSContext* urs, const CHAR8* problem);
+extern EFI_STATUS urs_explore_paths(URSContext* urs);
+extern EFI_STATUS urs_verify(URSContext* urs);
+extern EFI_STATUS urs_select_best(URSContext* urs);
+extern void urs_print_solution(URSContext* urs);
+
 // Simple strlen implementation
 static inline int strlen(const char* s) {
     int len = 0;
@@ -7019,13 +7028,28 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     Print(L"\r\n");
     Print(L"  Transformer 15M | 6 layers x 288 dimensions\r\n");
     Print(L"\r\n");
-    Print(L"  Powered by DRC v4.0 (Djibion Reasoner Core)\r\n");
+    Print(L"  Powered by DRC v5.0 (Djibion Reasoning Core)\r\n");
+    Print(L"  URS: Multi-Path Speculative Reasoning Engine\r\n");
     Print(L"\r\n");
     Print(L"  ARM Optimized Math | Flash Attention | UEFI\r\n");
     Print(L"\r\n");
     Print(L"  Made in Senegal by Djiby Diop\r\n");
     Print(L"\r\n");
     Print(L"  ========================================================\r\n");
+    Print(L"\r\n");
+    
+    // Initialize URS (Multi-Path Reasoning)
+    DRCCore reasoning_core;
+    drc_reasoning_init(&reasoning_core);
+    Print(L"  [URS] Speculative Reasoning Engine initialized\r\n");
+    
+    // URS Demo: Multi-path reasoning exploration
+    Print(L"  [URS] Generating reasoning hypotheses...\r\n");
+    urs_generate_hypotheses(&reasoning_core.urs, "optimize_inference");
+    urs_explore_paths(&reasoning_core.urs);
+    urs_verify(&reasoning_core.urs);
+    urs_select_best(&reasoning_core.urs);
+    urs_print_solution(&reasoning_core.urs);
     Print(L"\r\n");
     
     // System Information

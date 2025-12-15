@@ -1,45 +1,51 @@
-# 🚀 LLM Bare-Metal - World's First OS-Less Language Model
+# 🚀 LLM Bare-Metal - Cognitive OS-Less Intelligence
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/djibydiop/llm-baremetal)
-[![Version](https://img.shields.io/badge/version-7.2.0-blue.svg)](https://github.com/djibydiop/llm-baremetal/releases)
+[![Version](https://img.shields.io/badge/version-8.0.0-blue.svg)](https://github.com/djibydiop/llm-baremetal/releases)
 [![Platform](https://img.shields.io/badge/platform-UEFI%20x86--64-lightgrey.svg)](https://github.com/djibydiop/llm-baremetal)
 [![Made in Senegal](https://img.shields.io/badge/Made%20in-Senegal%20🇸🇳-green.svg)](https://github.com/djibydiop/llm-baremetal)
 
-> **🔥 The world's first Large Language Model with Network Boot & WiFi 6 on bare-metal. No OS. No kernel. Just UEFI + AI + Networking.**
+> **🔥 World's ONLY bare-metal AI with DRC v6.0, CWEB Protocol, Multi-Format Support, and Chat REPL**
 
-**Boot from USB in 5 seconds. Download models via HTTP/WiFi. Generate text from 110M parameters. All without an operating system.**
+**Boot from USB. Chat with AI. Stream 100GB models. All without an OS.**
 
-**🌐 NEW: Network Boot • 📡 WiFi 6 Driver (Phase 1) • 🧠 110M Model Support**
-
----
-
-## 🎯 What Makes This TRULY Unique?
-
-This is the **ONLY** project in the world that combines:
-
-- 🌐 **Network Boot** - Download models via HTTP (TCP/IP on bare-metal)
-- 📡 **WiFi 6 Driver** - Intel AX200 driver for bare-metal UEFI (WORLD FIRST)
-- 🧠 **110M Model** - Stories110M (768 dims, 12 layers, 110M params, 418 MB)
-- ⚡ **Boots in 5 seconds** - No OS installation needed
-- 🔥 **Raw UEFI** - Runs before any operating system
-- 🚀 **Real hardware tested** - Works on actual PCs
-- 🇸🇳 **Made in Senegal** - African tech innovation
-
-**UNIQUE**: No other LLM runs on bare-metal with networking. Period.
+**🆕 v8.0: DRC v6.0 (10 Phases) • CWEB Existence Protocol • ModelBridge Universal • Chat REPL • BIOO Vision**
 
 ---
 
-## 🎯 What Makes This Unique?
+## 🎯 Revolutionary Features (World's ONLY)
 
-This is **NOT** just another AI project. This is a **fully functional language model** that:
+### **DRC v6.0 - Cognitive Organism** 🧠
+- **10 Cognitive Units**: URS, Verification, UIC, UCR, UTI, UCO, UMS, UAM, UPE, UIV
+- **9 Infrastructure Systems**: Performance, Config, Trace, SelfDiag, SemanticCluster, TimeBudget, Bias, Emergency, RadioCognitive
+- **Complete reasoning system** running bare-metal
+- **No other firmware has cognitive capabilities**
 
-- ⚡ **Boots in 5 seconds** from a USB stick - no OS installation needed
-- 🔥 **Runs on raw UEFI** - the firmware that starts before any OS
-- 🧠 **Generates coherent text** - 150 tokens from a 15M parameter transformer
-- 📦 **Only 60 MB total** - model + code + tokenizer fit in a tiny image
-- 🚀 **Real hardware tested** - works on actual PCs, not just emulators
-- 🇸🇳 **Made in Senegal** - pushing African tech innovation
+### **CWEB - Cognitive Wireless Existence Boot** 📡
+- **"Systems don't boot. They decide to exist."**
+- Progressive trust (5 levels: NONE → IDENTITY → CRYPTO → BEHAVIORAL → FULL)
+- Distributed consensus (2/3 voting)
+- Existence queries before every inference
+- **Post-OS, post-BIOS, post-cloud architecture**
+
+### **ModelBridge Universal** 🌉
+- **Auto-detects format**: GGUF, llama2.c .bin, SafeTensors, PyTorch
+- **Zero-copy streaming**: Load 100GB models with 4MB chunks
+- **Network streaming**: Bypass UEFI 512MB limit
+- **Only universal model loader on bare-metal**
+
+### **Chat REPL** 💬
+- **Interactive AI conversations** without OS
+- Backspace support, command history
+- Network boot for large models
+- Commands: `/help`, `/history`, `/clear`, `/quit`
+
+### **BIOO Vision** 🔮
+- **Future BIOS replacement**: Self-healing, cognitive, conversational
+- Boot in <1 second
+- No memory limits
+- **The firmware that decides to exist**
 
 ---
 

@@ -29,6 +29,10 @@ extern EFI_STATUS http_download_model(
 
 extern BOOLEAN check_network_available(EFI_SYSTEM_TABLE *SystemTable);
 
+// Define guard to prevent duplicate DjibionReasonerCore definition
+// MUST be defined BEFORE including any DRC headers
+#define DJIBION_REASONER_CORE_DEFINED
+
 // WiFi Driver declarations
 #include "wifi_ax200.h"
 #include "wifi_firmware.h"
@@ -36,13 +40,8 @@ extern EFI_STATUS wifi_detect_device(EFI_SYSTEM_TABLE *SystemTable, WiFiDevice *
 extern void wifi_print_device_info(WiFiDevice *device);
 extern EFI_STATUS wifi_firmware_test_load(EFI_SYSTEM_TABLE *SystemTable, WiFiDevice *device);
 
-// URS - Unité de Raisonnement Spéculatif
-#include "drc_core.h"
-extern EFI_STATUS drc_reasoning_init(DRCCore* drc);
-extern EFI_STATUS urs_generate_hypotheses(URSContext* urs, const CHAR8* problem);
-extern EFI_STATUS urs_explore_paths(URSContext* urs);
-extern EFI_STATUS urs_verify(URSContext* urs);
-extern EFI_STATUS urs_select_best(URSContext* urs);
+// DRC - Djibion Reasoning Core with URS
+#include "drc_integration.h"
 extern void urs_print_solution(URSContext* urs);
 
 // Simple strlen implementation
@@ -300,7 +299,7 @@ typedef struct {
 #define DRC_ESCAPE_THRESHOLD 5
 #define DRC_ENTROPY_MIN 0.1f
 
-typedef struct {
+typedef struct DjibionReasonerCore {
     // Token history tracking
     int token_history[DRC_MAX_HISTORY];
     int history_count;
@@ -7028,7 +7027,7 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     Print(L"\r\n");
     Print(L"  Transformer 15M | 6 layers x 288 dimensions\r\n");
     Print(L"\r\n");
-    Print(L"  Powered by DRC v5.0 (Djibion Reasoning Core)\r\n");
+    Print(L"  Powered by DRC v5.1 (Djibion Reasoning Core)\r\n");
     Print(L"  URS: Multi-Path Speculative Reasoning Engine\r\n");
     Print(L"\r\n");
     Print(L"  ARM Optimized Math | Flash Attention | UEFI\r\n");
@@ -7036,20 +7035,6 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     Print(L"  Made in Senegal by Djiby Diop\r\n");
     Print(L"\r\n");
     Print(L"  ========================================================\r\n");
-    Print(L"\r\n");
-    
-    // Initialize URS (Multi-Path Reasoning)
-    DRCCore reasoning_core;
-    drc_reasoning_init(&reasoning_core);
-    Print(L"  [URS] Speculative Reasoning Engine initialized\r\n");
-    
-    // URS Demo: Multi-path reasoning exploration
-    Print(L"  [URS] Generating reasoning hypotheses...\r\n");
-    urs_generate_hypotheses(&reasoning_core.urs, "optimize_inference");
-    urs_explore_paths(&reasoning_core.urs);
-    urs_verify(&reasoning_core.urs);
-    urs_select_best(&reasoning_core.urs);
-    urs_print_solution(&reasoning_core.urs);
     Print(L"\r\n");
     
     // System Information
@@ -7088,7 +7073,7 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     
     Transformer transformer;
     
-    // Model configuration
+    // Model configuration - stories15M (validated with DRC v6.0)
     CHAR16* model_filename = L"stories15M.bin";
     const CHAR8* network_url = "http://10.0.2.2:8080/stories15M.bin";
     
@@ -7263,9 +7248,29 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     // Initialize DRC v4.0 Ultra-Advanced (Djibion Reasoner Core)
     drc_init(&drc_state);
     
-    // Message DRC
-    Print(L"  >> DRC v4.0 ACTIVATED <<\r\n");
-    Print(L"     (Djibion Reasoner Core - Neural Optimization)\r\n\r\n");
+    // Initialize DRC v5.1: Full Cognitive Organism
+    drc_inference_init();
+    
+    // Message DRC - Complete Cognitive Architecture
+    Print(L"  ╔═══════════════════════════════════════════════════╗\r\n");
+    Print(L"  ║       DRC v5.1 - Complete Cognitive Organism      ║\r\n");
+    Print(L"  ╠═══════════════════════════════════════════════════╣\r\n");
+    Print(L"  ║  COGNITIVE UNITS (10):                            ║\r\n");
+    Print(L"  ║  • URS: Multi-Path Reasoning                      ║\r\n");
+    Print(L"  ║  • UIC: Incoherence Detection                     ║\r\n");
+    Print(L"  ║  • UCR: Risk Assessment                           ║\r\n");
+    Print(L"  ║  • UTI: Temporal Reasoning                        ║\r\n");
+    Print(L"  ║  • UCO: Counter-Reasoning                         ║\r\n");
+    Print(L"  ║  • UMS: Semantic Memory                           ║\r\n");
+    Print(L"  ║  • UAM: Auto-Moderation                           ║\r\n");
+    Print(L"  ║  • UPE: Plausibility Checking                     ║\r\n");
+    Print(L"  ║  • UIV: Intention & Values                        ║\r\n");
+    Print(L"  ╠═══════════════════════════════════════════════════╣\r\n");
+    Print(L"  ║  INFRASTRUCTURE (3):                              ║\r\n");
+    Print(L"  ║  • Performance Monitoring                         ║\r\n");
+    Print(L"  ║  • Configuration System (4 presets)               ║\r\n");
+    Print(L"  ║  • Decision Trace (Audit Trail)                   ║\r\n");
+    Print(L"  ╚═══════════════════════════════════════════════════╝\r\n\r\n");
     
     // Sync with network at startup
     drc_sync_with_network(&drc_state);
@@ -7366,8 +7371,24 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
             int dominant_token = 0;
             float entropy = 1.0f;
             
+            // ═══════════════════════════════════════════════════════════════
+            // DRC v5.1: Full Cognitive Analysis BEFORE Sampling
+            // ═══════════════════════════════════════════════════════════════
+            const CHAR8* reasoning_context = "story_generation";
+            UINT32 reasoning_mode = drc_urs_before_inference(reasoning_context, pos);
+            drc_apply_reasoning(logits, transformer.config.vocab_size, pos, reasoning_mode);
+            
             float coin = (float)rand_efi() / (float)RAND_MAX;
             next = sample_mult(logits, transformer.config.vocab_size, coin);
+            
+            // DRC v5.1: Verify token with full cognitive checks
+            if (!drc_verify_token(next, logits, transformer.config.vocab_size)) {
+                // Token failed verification - resample with more conservative bias
+                for (int i = 0; i < transformer.config.vocab_size; i++) {
+                    logits[i] *= 0.9f;  // Dampen all logits
+                }
+                next = sample_mult(logits, transformer.config.vocab_size, coin);
+            }
             
             // DRC Layer 6: v4.0 ULTRA-ADVANCED - Stagnation Detection
             drc_detect_stagnation(&drc_state, next);
@@ -7417,8 +7438,13 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         
         // Stop if we hit EOS
         if (next == 2 || next == 31999) {
+            // Update URS with success
+            drc_urs_update(next, TRUE);
             break;
         }
+        
+        // Update URS after each token
+        drc_urs_update(next, TRUE);
         
         // Decode and print token text
         if (use_text && next >= 0 && next < tokenizer.vocab_size) {
@@ -7458,7 +7484,7 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     Print(L"  Total Tokens Generated: %d\r\n", total_tokens);
     Print(L"  Time Elapsed: %.1f seconds\r\n", elapsed_sec);
     Print(L"  Average Speed: %.1f tokens/sec\r\n", tok_per_sec);
-    Print(L"  DRC Interventions: %d\r\n", drc_interventions);
+    Print(L"  DRC v4.0 Interventions: %d\r\n", drc_interventions);
     if (drc_interventions > 0) {
         Print(L"  Tokens per Intervention: %.1f\r\n", (float)total_tokens / drc_interventions);
     }
@@ -7473,8 +7499,11 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     ST->ConOut->SetAttribute(ST->ConOut, EFI_WHITE);
     Print(L"Generated %d tokens │ ~%.1f tok/s │ DRC v4.0 Active\r\n\r\n", total_tokens, tok_per_sec);
     
-    // Print DRC training statistics
+    // Print DRC v4.0 training statistics
     drc_print_training_stats(&drc_state);
+    
+    // Print DRC v5.1: Complete cognitive statistics
+    drc_print_status();
     
     } else if (mode == 2) {
         // INTERACTIVE MENU MODE

@@ -29,6 +29,36 @@ extern EFI_STATUS http_download_model(
 
 extern BOOLEAN check_network_available(EFI_SYSTEM_TABLE *SystemTable);
 
+// HTTP Streaming declarations
+typedef struct {
+    VOID* url;
+    VOID* tcp;
+    UINT64 total_size;
+    UINT64 downloaded;
+    UINT8* chunk_buffer;
+    UINT32 chunk_size;
+    BOOLEAN active;
+} HttpStreamSession;
+
+extern EFI_STATUS http_stream_init(
+    EFI_HANDLE ImageHandle,
+    EFI_SYSTEM_TABLE *SystemTable,
+    const CHAR8* url_str,
+    HttpStreamSession* session
+);
+
+extern EFI_STATUS http_stream_get_chunk(
+    EFI_HANDLE ImageHandle,
+    EFI_SYSTEM_TABLE *SystemTable,
+    HttpStreamSession* session,
+    UINT64 offset,
+    UINT64 size,
+    VOID** chunk_data,
+    UINT64* bytes_read
+);
+
+extern void http_stream_cleanup(HttpStreamSession* session);
+
 // Define guard to prevent duplicate DjibionReasonerCore definition
 // MUST be defined BEFORE including any DRC headers
 #define DJIBION_REASONER_CORE_DEFINED
@@ -4178,6 +4208,102 @@ int sample_min_p(float* logits, int n, float min_p, float temperature, float coi
         }
     }
     return best;
+}
+
+// ----------------------------------------------------------------------------
+// Network Streaming Functions
+
+// Global streaming session
+static HttpStreamSession g_stream_session = {0};
+static BOOLEAN g_streaming_mode = FALSE;
+static EFI_HANDLE g_ImageHandle = NULL;
+static EFI_SYSTEM_TABLE* g_SystemTable = NULL;
+
+// Calculate offset for a specific layer's weights
+UINT64 calculate_layer_offset(int layer, Config* p) {
+    if (layer < 0 || layer >= p->n_layers) return 0;
+    
+    // Header: 7 ints (28 bytes) + 3 shared tensors before layers
+    UINT64 offset = 28;  // Config header
+    
+    // Shared weights:
+    // 1. token_embedding_table: vocab_size * dim
+    offset += (UINT64)p->vocab_size * p->dim * sizeof(float);
+    
+    // 2. rms_att_weight: n_layers * dim
+    offset += (UINT64)p->n_layers * p->dim * sizeof(float);
+    
+    // 3. wq, wk, wv, wo: each layer has dim * dim weights
+    // 4. rms_ffn_weight: dim per layer
+    // 5. w1, w2, w3: hidden_dim * dim per layer
+    
+    // Per-layer size calculation
+    UINT64 per_layer = 0;
+    per_layer += (UINT64)p->dim * p->dim * sizeof(float);  // wq
+    per_layer += (UINT64)p->dim * p->dim * sizeof(float);  // wk
+    per_layer += (UINT64)p->dim * p->dim * sizeof(float);  // wv
+    per_layer += (UINT64)p->dim * p->dim * sizeof(float);  // wo
+    per_layer += (UINT64)p->dim * sizeof(float);           // rms_ffn_weight
+    per_layer += (UINT64)p->hidden_dim * p->dim * sizeof(float);  // w1
+    per_layer += (UINT64)p->dim * p->hidden_dim * sizeof(float);  // w2
+    per_layer += (UINT64)p->hidden_dim * p->dim * sizeof(float);  // w3
+    
+    offset += per_layer * layer;
+    return offset;
+}
+
+// Load a weight chunk from network
+EFI_STATUS load_weight_chunk(UINT64 offset, UINT64 size, float** data) {
+    if (!g_streaming_mode || !g_stream_session.active) {
+        return EFI_NOT_READY;
+    }
+    
+    VOID* chunk_ptr;
+    UINT64 bytes_read;
+    
+    EFI_STATUS status = http_stream_get_chunk(
+        g_ImageHandle,
+        g_SystemTable,
+        &g_stream_session,
+        offset,
+        size,
+        &chunk_ptr,
+        &bytes_read
+    );
+    
+    if (EFI_ERROR(status)) {
+        return status;
+    }
+    
+    *data = (float*)chunk_ptr;
+    return EFI_SUCCESS;
+}
+
+// Initialize streaming mode for large models
+EFI_STATUS init_streaming_mode(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable, const CHAR8* url) {
+    g_ImageHandle = ImageHandle;
+    g_SystemTable = SystemTable;
+    
+    Print(L"\r\n[Streaming] Initializing HTTP streaming...\r\n");
+    Print(L"[Streaming] URL: %a\r\n", url);
+    
+    EFI_STATUS status = http_stream_init(
+        ImageHandle,
+        SystemTable,
+        url,
+        &g_stream_session
+    );
+    
+    if (EFI_ERROR(status)) {
+        Print(L"[Streaming] Failed to initialize: %r\r\n", status);
+        return status;
+    }
+    
+    g_streaming_mode = TRUE;
+    Print(L"[Streaming] Ready! Model size: %d MB\r\n", 
+          g_stream_session.total_size / (1024 * 1024));
+    
+    return EFI_SUCCESS;
 }
 
 // ----------------------------------------------------------------------------

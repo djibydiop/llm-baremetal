@@ -1,51 +1,29 @@
-# 🚀 LLM Bare-Metal - Cognitive OS-Less Intelligence
+# LLM Bare-Metal - Cognitive AI Without OS
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/djibydiop/llm-baremetal)
-[![Version](https://img.shields.io/badge/version-8.0.0-blue.svg)](https://github.com/djibydiop/llm-baremetal/releases)
-[![Platform](https://img.shields.io/badge/platform-UEFI%20x86--64-lightgrey.svg)](https://github.com/djibydiop/llm-baremetal)
-[![Made in Senegal](https://img.shields.io/badge/Made%20in-Senegal%20🇸🇳-green.svg)](https://github.com/djibydiop/llm-baremetal)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-UEFI%20x86--64-lightgrey.svg)](https://en.wikipedia.org/wiki/Unified_Extensible_Firmware_Interface)
 
-> **🔥 World's ONLY bare-metal AI with DRC v6.0, CWEB Protocol, Multi-Format Support, and Chat REPL**
+> **Run language models with cognitive reasoning directly on bare metal (UEFI)**
 
-**Boot from USB. Chat with AI. Stream 100GB models. All without an OS.**
-
-**🆕 v8.0: DRC v6.0 (10 Phases) • CWEB Existence Protocol • ModelBridge Universal • Chat REPL • BIOO Vision**
+**Boot from USB. Run AI with DRC v6.0 cognitive system. No OS required.**
 
 ---
 
-## 🎯 Revolutionary Features (World's ONLY)
+## Features
 
-### **DRC v6.0 - Cognitive Organism** 🧠
+### DRC v6.0 - Djibion Reasoning Core
 - **10 Cognitive Units**: URS, Verification, UIC, UCR, UTI, UCO, UMS, UAM, UPE, UIV
 - **9 Infrastructure Systems**: Performance, Config, Trace, SelfDiag, SemanticCluster, TimeBudget, Bias, Emergency, RadioCognitive
-- **Complete reasoning system** running bare-metal
-- **No other firmware has cognitive capabilities**
+- **Complete reasoning system** running on bare metal
+- **Speculative reasoning** before each token
+- **Token verification** and quality control
 
-### **CWEB - Cognitive Wireless Existence Boot** 📡
-- **"Systems don't boot. They decide to exist."**
-- Progressive trust (5 levels: NONE → IDENTITY → CRYPTO → BEHAVIORAL → FULL)
-- Distributed consensus (2/3 voting)
-- Existence queries before every inference
-- **Post-OS, post-BIOS, post-cloud architecture**
-
-### **ModelBridge Universal** 🌉
-- **Auto-detects format**: GGUF, llama2.c .bin, SafeTensors, PyTorch
-- **Zero-copy streaming**: Load 100GB models with 4MB chunks
-- **Network streaming**: Bypass UEFI 512MB limit
-- **Only universal model loader on bare-metal**
-
-### **Chat REPL** 💬
-- **Interactive AI conversations** without OS
-- Backspace support, command history
-- Network boot for large models
-- Commands: `/help`, `/history`, `/clear`, `/quit`
-
-### **BIOO Vision** 🔮
-- **Future BIOS replacement**: Self-healing, cognitive, conversational
-- Boot in <1 second
-- No memory limits
-- **The firmware that decides to exist**
+### Technical
+- **Bare-metal execution**: Runs directly in UEFI without OS
+- **Network streaming**: Load models via HTTP with Range requests (RFC 7233)
+- **WiFi support**: Intel AX200/AX210 WiFi 6 cards
+- **Universal ModelBridge**: Auto-detects GGUF, .bin, SafeTensors formats
+- **Chat REPL**: Interactive AI conversations
 
 ---
 
@@ -77,107 +55,73 @@
 - 📦 **Total Size**: 420 MB (model + tokenizer + code)
 
 ---
+## Quick Start
 
-## 🚀 Quick Start (3 Commands)
-
-## 🚀 Quick Start
-
-### Method 1: Test in QEMU (Fastest)
+### Test in QEMU
 
 ```bash
-# Linux/WSL
-git clone https://github.com/djibydiop/llm-baremetal.git
-cd llm-baremetal
-./download_stories110m.sh  # Downloads stories15M.bin
-make && make disk
-qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd -drive file=qemu-test.img,format=raw -m 512
+# Build
+make clean && make llama2.efi
+
+# Create disk image with model
+./download_stories110m.sh  # Downloads stories15M.bin (60MB)
+make disk
+
+# Run in QEMU
+qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd \
+  -drive file=qemu-test.img,format=raw -m 512M
 ```
 
-```powershell
-# Windows (native QEMU)
-git clone https://github.com/djibydiop/llm-baremetal.git
-cd llm-baremetal
-wsl bash -c './download_stories110m.sh && make && make disk'
-& 'C:\Program Files\qemu\qemu-system-x86_64.exe' -bios OVMF.fd -drive file=qemu-test.img,format=raw -m 512
+### Network Streaming (for larger models)
+
+```bash
+# Terminal 1: Start HTTP server
+python serve_model.py
+
+# Terminal 2: Run QEMU with network
+qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd \
+  -drive file=qemu-test.img,format=raw -m 512M \
+  -net nic,model=e1000 -net user
 ```
 
-### Method 2: Boot on Real Hardware
+The model will stream from `http://10.0.2.2:8080/` in 4MB chunks.
 
-1. **Download**: Get `llm-baremetal-usb.img` from [Releases](https://github.com/djibydiop/llm-baremetal/releases)
-2. **Flash**: Use [Rufus](https://rufus.ie/) (Windows) or `dd` (Linux)
-   - Mode: DD Image
-   - Partition scheme: GPT
-   - Target system: UEFI (not CSM)
-3. **Boot**: Insert USB, restart PC, press F12/F2, select USB
-4. **Watch**: AI boots and generates text in 5-10 seconds!
-
----
-
-## 📖 What You'll See
-
-```
-========================================================
-        B A R E - M E T A L   N E U R A L   L L M
-========================================================
-  Transformer 15M | 6 layers x 288 dimensions
-  Powered by DRC v4.0 (Djibion Reasoner Core)
-  Made in Senegal by Djiby Diop
-========================================================
-
-  Loading stories15M.bin (60 MB)...
-  Progress: 10% 20% 30% 40% 50% 60% 70% 80% 90% 100% Done!
-  Model loaded successfully!
-
-  Loading BPE tokenizer...
-  [SUCCESS] Tokenizer loaded (32000 tokens)
-
-  Model: Stories15M (288 dim, 6 layers, 15M params)
-  Sampling: Temperature 1.2 | Steps: 150
-
-  === Story Generation ===
-
-  Assistant: Once upon a time, there was a little girl named Lily...
-  [text continues for 150 tokens]
-
-  ========================================
-  Generation Complete!
-  ========================================
-```
-
----
-
-## 🛠️ Technical Architecture
-
-### Model Pipeline
-1. **UEFI Boot** → Firmware initializes hardware
-2. **Load Model** → 60 MB stories15M.bin loaded into memory
-3. **Load Tokenizer** → 32K vocab SentencePiece BPE
-4. **Initialize DRC** → Djibion Reasoner Core v4.0
-5. **Generate** → 150 tokens via transformer forward passes
-6. **Display** → Real-time text output on screen
+## Architecture
 
 ### Core Components
-- **llama2_efi.c** (8491 lines): Main transformer implementation
-  - Self-attention with RoPE positional encoding
-  - SwiGLU activation functions
+
+- **llama2_efi.c**: Transformer implementation
+  - Self-attention with RoPE encoding
+  - SwiGLU activation
   - RMSNorm normalization
-  - KV-cache for efficiency
-- **DRC v4.0**: Neural optimization layer
-  - Domain detection
-  - Logit stabilization
-  - Diversity forcing
-  - Stagnation prevention
+  - KV-cache
+  
+- **network_boot.c**: HTTP streaming client
+  - TCP4 protocol
+  - Range request support (RFC 7233)
+  - 4MB chunk buffer
+  
+- **wifi_ax200.c**: WiFi 6 driver
+  - Intel AX200/AX210 support
+  - WPA2/WPA3 authentication
+  
 - **Tokenizer**: SentencePiece BPE decoder
-- **Math**: Optimized softmax, matmul, RoPE (SSE2)
 
-### Why No Colors?
-Initial version had color UI, but `SetAttribute()` UEFI calls caused system freezes on some firmware. Current version uses plain white text for **maximum hardware compatibility**.
-- 17 NEURO-NET algorithms to study
-- Benchmarking tools
+### Streaming Protocol
 
----
+HTTP Range requests allow loading models larger than UEFI memory:
 
-## 🎬 See It In Action
+```
+GET /model.bin HTTP/1.0
+Range: bytes=0-4194303
+Host: 10.0.2.2
+
+→ 206 Partial Content
+Content-Range: bytes 0-4194303/417566976
+[4MB chunk]
+```
+
+Each layer loads on-demand, bypassing the 512MB limit.
 
 ---
 
@@ -211,107 +155,30 @@ wget https://github.com/karpathy/llama2.c/raw/master/tokenizer.bin
 # 5. Build
 make clean && make
 
-# 6. Create bootable disk image
-make disk
-# Creates qemu-test.img (128 MB) with EFI + model + tokenizer
+## Requirements
 
-# 7. Test in QEMU
-qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd -drive file=qemu-test.img,format=raw -m 512
-
-# 8. Create USB image (optional)
-cp qemu-test.img llm-baremetal-usb.img
-# Flash this to USB with Rufus (Windows) or dd (Linux)
-```
-
-### Windows-Specific (PowerShell)
-
-```powershell
-# Install WSL2 if not already installed
-wsl --install -d Ubuntu
-
-# Build inside WSL
-wsl bash -c 'cd /mnt/c/Users/YOUR_USER/Desktop/llm-baremetal && make && make disk'
-
-# Test with Windows QEMU (much faster than WSL QEMU)
-& 'C:\Program Files\qemu\qemu-system-x86_64.exe' -bios OVMF.fd -drive file=qemu-test.img,format=raw -m 512
-```
-
----
-
-## � Project Stats
-
-- **Lines of Code**: 8,491 (main transformer) + tokenizer + math libs
-- **Model Size**: 60 MB (stories15M.bin)
-- **Vocabulary**: 32,000 tokens (SentencePiece BPE)
-- **Architecture**: 6 layers, 288 dimensions, 6 attention heads
-- **Parameters**: 15 million
-- **Inference Speed**: ~12 tokens/second (modern hardware)
-- **Boot Time**: 5-10 seconds (USB to text generation)
-
----
-
-## 🎯 Roadmap
-
-### ✅ v6.0 (Current - December 2025)
-- ✅ Full Stories15M (60MB) working on real hardware
-- ✅ USB bootable image creation
-- ✅ DRC v4.0 neural optimization
-- ✅ Hardware compatibility (removed SetAttribute freezes)
-- ✅ Production ready
-
-### 🚧 v6.1 (Next - Q1 2026)
-- **Larger Models** - 110M, 260M parameter support
-- **Quantization** - 4-bit/8-bit inference for bigger models
-- **ARM64 Port** - Raspberry Pi 4/5 support
-- **Network Boot** - PXE/HTTP model loading
-- **Multi-GPU** - Distributed inference across machines
-
-### 🔮 v7.0 (Future)
-- **LLaMA 3 Support** - Full 8B models
-- **LoRA Adapters** - Fine-tuning support
-- **Voice I/O** - Audio input/output
-- **Multimodal** - Image understanding (CLIP integration)
-- Multi-modal (text + images)
-- GPU acceleration (Vulkan)
-- Phase 5 NEURO-NET (5 new features)
-- Real-time fine-tuning
-
-**→** [Full roadmap](ROADMAP.md)
-
----
-
-## 📊 Performance
-
-| Metric | stories15M | stories110M |
-|--------|-----------|-------------|
-| Binary Size | 157 KB | 157 KB |
-| Model Size | 60 MB | 420 MB |
-| Boot Time | ~2 sec | ~3 sec |
-| Load Time | ~1 sec | ~5 sec |
-| Tokens/sec | ~80 | ~50 |
-| Memory Usage | 512 MB | 1.2 GB |
-
-*Tested on Intel i5-8250U, 8GB RAM, USB 3.0*
-
----
-
-## 🚀 Hardware Requirements
-
-### Minimum
-- x86-64 CPU with AVX2 support (Intel Haswell 2013+, AMD Excavator 2015+)
-- 4GB RAM
+- x86-64 CPU (Intel/AMD)
+- 512MB+ RAM
 - UEFI firmware
-- USB 2.0+ (for USB boot)
+- Linux with GNU-EFI tools
 
-### Recommended
-- Intel Core i5/i7 (4th gen+) or AMD Ryzen
-- 8GB RAM
-- USB 3.0+
+## Build
 
-### BIOS Settings
-- **UEFI boot mode** (not Legacy/CSM)
-- **Secure Boot disabled**
-- **Fast Boot disabled** (optional, helps with debugging)
+```bash
+# Install dependencies (Ubuntu/Debian)
+sudo apt-get install gnu-efi gcc make
+
+# Build
+make clean && make llama2.efi
+
+# Create disk image
+./download_stories110m.sh
+make disk
+```
+
+## License
+
+MIT - See LICENSE file
 
 ---
 

@@ -7439,7 +7439,7 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         // Stop if we hit EOS
         if (next == 2 || next == 31999) {
             // Update URS with success
-            drc_urs_update(next, TRUE);
+            // drc_urs_update(next, TRUE);
             break;
         }
         

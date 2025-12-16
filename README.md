@@ -72,19 +72,21 @@ qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd \
   -drive file=qemu-test.img,format=raw -m 512M
 ```
 
-### Network Streaming (for larger models)
+### Network Streaming (for models >512MB)
+
+Large models can be streamed over HTTP to bypass UEFI memory limits:
 
 ```bash
-# Terminal 1: Start HTTP server
+# 1. Start HTTP server (serves models with Range support)
 python serve_model.py
 
-# Terminal 2: Run QEMU with network
+# 2. Run QEMU with network
 qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd \
   -drive file=qemu-test.img,format=raw -m 512M \
   -net nic,model=e1000 -net user
 ```
 
-The model will stream from `http://10.0.2.2:8080/` in 4MB chunks.
+The system downloads 4MB chunks on-demand from `http://10.0.2.2:8080/`
 
 ## Architecture
 

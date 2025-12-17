@@ -1,90 +1,26 @@
-# Large model files (download separately)
-# But allow tokenizer.bin (small, required for text decoding)
-!tokenizer.bin
+# Binaries
+*.o
+*.so
+*.efi
+
+# Images (on GitHub Releases only)
+*.img
+
+# Models (on GitHub Releases only)
 *.bin
 
-# Disk images
-*.img
-*.iso
-*.qcow2
+# Firmware (on GitHub Releases only)
+*.ucode
+*.tgz
 
-# Compiled binaries
-*.efi
-*.o
-*.obj
-*.a
-*.lib
-*.so
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-venv/
-env/
-ENV/
-.pytest_cache/
-
-# Training outputs
-out-*/
-checkpoints/
-*.ckpt
-*.pth
-*.pt
-
-# Data directories
-data/
-TinyStories/
-tinystories_data/
+# OVMF (download separately)
+OVMF.fd
 
 # Logs
 *.log
-qemu_*.txt
-log*.txt
+*.txt
 
-# IDE
-.vscode/
-.vs/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS files
-.DS_Store
-Thumbs.db
-desktop.ini
-
-# OVMF firmware
-OVMF.fd
-OVMF_CODE.fd
-OVMF_VARS.fd
-
-# HuggingFace cache
-.cache/
-*.safetensors
-*_pytorch.bin
-
-# Temporary files
-tmp/
-temp/
-*.tmp
-
-# Test scripts (generated)
-full-test.sh
-just-build.sh
-quick-demo.ps1
-rebuild-and-test.ps1
-rebuild.py
-STATUS_REPORT.md
-
-# Build artifacts
-build*.log
-mnt/
-
-# Build artifacts
-*.o
-*.so
-*.efi
-*.img
+# Temporaires
 SESSION_*.md
+GITHUB_UPLOAD.md
+serve_model.py

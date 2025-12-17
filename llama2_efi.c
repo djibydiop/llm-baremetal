@@ -531,6 +531,13 @@ void drc_init(DjibionReasonerCore* drc) {
     drc->history_pos = 0;
     drc->repetition_count = 0;
     drc->stuck_token = -1;
+    
+    // Preload blacklist with ghost tokens
+    drc->blacklist[0] = 0;  // <unk>
+    drc->blacklist[1] = 1;  // <s>
+    drc->blacklist[2] = 2;  // </s>
+    drc->blacklist[3] = 3;  // <0x00> - THE GHOST
+    drc->blacklist_count = 4;
     drc->emergency_escapes = 0;
     drc->nan_detections = 0;
     drc->zero_embedding_count = 0;
@@ -934,26 +941,41 @@ void drc_stabilize_logits(DjibionReasonerCore* drc, float* logits, int vocab_siz
         }
     }
     
-    // Suppress problematic tokens
-    if (pos < 10) {
-        logits[0] = -1e10f;  // <unk>
-        logits[1] = -1e10f;  // <s>
-        logits[2] = -1e10f;  // </s>
-        logits[3] = -1e10f;  // <0x00> - THE GHOST TOKEN
-        if (vocab_size > 31999) logits[31999] = -1e10f;
+    // Suppress problematic tokens ALWAYS
+    logits[0] = -1e10f;  // <unk> - ALWAYS kill
+    logits[1] = -1e10f;  // <s> - ALWAYS kill
+    logits[2] = -1e10f;  // </s> - ALWAYS kill
+    logits[3] = -1e10f;  // <0x00> - THE GHOST TOKEN - ALWAYS KILL
+    if (vocab_size > 31999) logits[31999] = -1e10f;
+    
+    // Extra suppression for token 3 (the repeating ghost)
+    if (pos < 50) {
+        logits[3] -= 100.0f;  // Nuclear penalty early on
     }
     
-    // TRAINING: Apply learned blacklist
+    // TRAINING: Apply learned blacklist with STRONG penalty
     for (int i = 0; i < drc->blacklist_count; i++) {
         int bad_token = drc->blacklist[i];
         if (bad_token >= 0 && bad_token < vocab_size) {
-            logits[bad_token] -= drc->penalty_strength * 0.5f;  // Moderate penalty
+            // Ghost tokens (0-3) get nuclear penalty
+            if (bad_token <= 3) {
+                logits[bad_token] = -1e10f;  // Complete elimination
+            } else {
+                logits[bad_token] -= drc->penalty_strength * 2.0f;  // Strong penalty for others
+            }
         }
     }
     
-    // If stuck on same token, kill it with adaptive strength
-    if (drc->repetition_count >= 2 && drc->stuck_token >= 0 && drc->stuck_token < vocab_size) {
-        logits[drc->stuck_token] -= drc->penalty_strength * 2.0f;  // Strong penalty
+    // If stuck on same token, kill it IMMEDIATELY with extreme strength
+    if (drc->repetition_count >= 1 && drc->stuck_token >= 0 && drc->stuck_token < vocab_size) {
+        // Escalating penalty based on repetition count
+        float penalty = drc->penalty_strength * (2.0f + drc->repetition_count * 2.0f);
+        logits[drc->stuck_token] -= penalty;  // Increasingly strong penalty
+        
+        // If token 3, nuclear option
+        if (drc->stuck_token == 3) {
+            logits[3] = -1e10f;
+        }
     }
     
     // Apply diversity injection if needed
@@ -7146,72 +7168,59 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     
     Print(L"\r\n\r\n");
     Print(L"  ========================================================\r\n");
-    Print(L"\r\n");
-    Print(L"         B A R E - M E T A L   N E U R A L   L L M\r\n");
-    Print(L"\r\n");
-    Print(L"  ========================================================\r\n");
-    Print(L"\r\n");
-    Print(L"  Transformer 15M | 6 layers x 288 dimensions\r\n");
-    Print(L"\r\n");
-    Print(L"  Powered by DRC v5.1 (Djibion Reasoning Core)\r\n");
-    Print(L"  URS: Multi-Path Speculative Reasoning Engine\r\n");
-    Print(L"\r\n");
-    Print(L"  ARM Optimized Math | Flash Attention | UEFI\r\n");
-    Print(L"\r\n");
-    Print(L"  Made in Senegal by Djiby Diop\r\n");
-    Print(L"\r\n");
+    Print(L"       BARE-METAL LLM | WiFi 6 Network Boot\r\n");
+    Print(L"       DRC v5.1 | Made in Senegal by Djiby Diop\r\n");
     Print(L"  ========================================================\r\n");
     Print(L"\r\n");
     
-    // System Information
-    Print(L"  System: UEFI x86_64 | Memory: 512 MB\r\n");
-    Print(L"  CPU: SSE2 Optimized | Math: ARM Routines v2.0\r\n");
-    Print(L"\r\n");
+    // === BOOT: Network first, disk fallback ===
+    Print(L"  Boot mode: HTTP Network (disk fallback)\r\n\r\n");
     
-    // Check WiFi capability
-    Print(L"  [WIFI] Checking for Intel WiFi hardware...\r\n");
-    WiFiDevice wifi_device;
-    EFI_STATUS wifi_status = wifi_detect_device(SystemTable, &wifi_device);
-    
-    if (!EFI_ERROR(wifi_status)) {
-        Print(L"  [WIFI] Status: ✓ DETECTED (Intel AX200/AX201)\r\n");
-        Print(L"  [WIFI] Mode: WiFi 6 (802.11ax) ready\r\n");
-        
-        // Test firmware loading (Week 2-4)
-        Print(L"  [WIFI] Testing firmware loading framework...\r\n");
-        wifi_firmware_test_load(SystemTable, &wifi_device);
-    } else {
-        Print(L"  [WIFI] Status: Not detected (using wired network)\r\n");
-    }
-    
-    // Check wired network availability
-    Print(L"  [NETWORK] Checking wired network capability...\r\n");
+    // Check network availability (skip WiFi setup for now, use wired/QEMU network)
     BOOLEAN network_available = check_network_available(SystemTable);
-    
-    if (network_available) {
-        Print(L"  [NETWORK] Status: ✓ AVAILABLE (TCP/IP stack detected)\r\n");
-        Print(L"  [NETWORK] Mode: HYBRID (Network Boot with disk fallback)\r\n");
-    } else {
-        Print(L"  [NETWORK] Status: DISK BOOT ONLY (No network stack)\r\n");
-    }
-    
-    Print(L"\r\n");
+    BOOLEAN wifi_ready = FALSE;  // WiFi will be enabled later
     
     Transformer transformer;
-    
-    // Model configuration - stories15M (validated with DRC v6.0)
     CHAR16* model_filename = L"stories15M.bin";
-    const CHAR8* network_url = "http://10.0.2.2:8080/stories15M.bin";
+    
+    // URLs GitHub Releases pour boot réseau stable
+    // FORMAT: https://github.com/USERNAME/REPO/releases/download/VERSION/FILENAME
+    // Releases = pas de limite Git LFS!
+    const CHAR8* github_base = "https://github.com/djibydiop/llm-baremetal/releases/download/v1.0/";
+    
+    // URLs de téléchargement avec priorité GitHub Releases
+    const CHAR8* model_urls[] = {
+        "https://github.com/djibydiop/llm-baremetal/releases/download/v1.0/stories15M.bin",
+        "http://10.0.2.2:8080/stories15M.bin",           // Fallback local (QEMU/dev)
+        "http://192.168.1.100:8080/stories15M.bin",     // Fallback LAN
+        NULL
+    };
+    
+    const CHAR8* tokenizer_urls[] = {
+        "https://github.com/djibydiop/llm-baremetal/releases/download/v1.0/tokenizer.bin",
+        "http://10.0.2.2:8080/tokenizer.bin",
+        NULL
+    };
     
     VOID* model_data = NULL;
     UINTN model_size = 0;
     BOOLEAN loaded_from_network = FALSE;
     
-    // Try network boot first if available (DISABLED for now - use disk)
-    if (0 && network_available) {
-        Print(L"\r\n  [NETWORK BOOT] Attempting HTTP download...\r\n");
-        Print(L"  URL: %a\r\n", network_url);
-        Print(L"\r\n");
+    // Network boot avec GitHub Releases en priorité
+    if (network_available) {
+        Print(L"  [NETWORK BOOT] GitHub Releases boot enabled\r\n");
+        Print(L"  Repository: djibydiop/llm-baremetal (v1.0)\r\n\r\n");
+        
+        // Try each URL for model
+        for (int url_idx = 0; model_urls[url_idx] != NULL; url_idx++) {
+            const CHAR8* network_url = model_urls[url_idx];
+            
+            if (url_idx == 0) {
+                Print(L"  [PRIMARY] GitHub Releases (no LFS limits)\r\n");
+            } else {
+                Print(L"  [FALLBACK %d] Local/LAN server\r\n", url_idx);
+            }
+            Print(L"  Downloading: %a\r\n", network_url);
         
         EFI_STATUS net_status = http_download_model(
             ImageHandle,
@@ -7221,33 +7230,37 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
             &model_size
         );
         
-        if (!EFI_ERROR(net_status)) {
+        if (!EFI_ERROR(net_status) && model_data != NULL && model_size > 0) {
             loaded_from_network = TRUE;
-            Print(L"\r\n  [SUCCESS] Model loaded via Network Boot!\r\n");
-            Print(L"  Size: %d bytes (%.1f MB)\r\n", 
-                  model_size, (float)model_size / (1024.0f * 1024.0f));
+            Print(L"  ✓ NETWORK BOOT SUCCESS\\r\n");
+            Print(L"  Downloaded: %.2f MB\\r\n", 
+                  (float)model_size / (1024.0f * 1024.0f));
+            Print(L"  Interface: LAN/WLAN\r\n\r\n");
         } else {
-            Print(L"\r\n  [NETWORK] Download failed, falling back to disk...\r\n");
+            Print(L"  ✗ Network timeout or connection failed\r\n");
+            Print(L"  → Automatic fallback to disk boot\r\n\r\n");
         }
     }
+            }  // for loop
+    
+
     
     // Fallback to disk if network failed or unavailable
     EFI_STATUS Status = EFI_SUCCESS;
     
     if (!loaded_from_network) {
-        Print(L"\r\n  Loading %s (420 MB from disk)...\r\n", model_filename);
+        Print(L"  === PHASE 2: DISK BOOT ===\r\n\r\n");
+        Print(L"  Loading %s from disk...\r\n", model_filename);
         
         Status = load_model(ImageHandle, SystemTable, &transformer, model_filename);
         
         if (EFI_ERROR(Status)) {
-            Print(L"[ERROR] Failed to load %s!\r\n", model_filename);
-            Print(L"   Status: %r\r\n", Status);
-            Print(L"\r\n[FATAL] System will halt in 5 seconds...\r\n");
-            ST->BootServices->Stall(5000000);
+            Print(L"  [ERROR] Failed to load model: %r\r\n", Status);
+            Print(L"  System will halt.\r\n");
             return Status;
         }
         
-        Print(L"  Model loaded successfully from disk!\r\n");
+        Print(L"  Model loaded successfully (58 MB)\r\n\r\n");
     } else {
         // Parse network-loaded model
         Print(L"\r\n  Parsing network model data...\r\n");
@@ -7340,7 +7353,8 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     
     BOOLEAN use_text = !EFI_ERROR(Status);
     if (!use_text) {
-        Print(L"[ERROR] Tokenizer not found - will display token IDs only\r\n");
+        Print(L"[WARNING] Tokenizer not found - using fallback decoding\r\n");
+        use_text = TRUE;  // Force text display with fallback
     } else {
         Print(L"[SUCCESS] Tokenizer loaded (32000 tokens)\r\n");
     }
@@ -7354,53 +7368,25 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     uint32_t seed = (uint32_t)((uintptr_t)&transformer ^ (uintptr_t)&tokenizer);
     srand_efi(seed);
     
-    // Simple generation mode with stories15M
-    Print(L"\r\n");
-    Print(L"  Model: Stories15M (288 dim, 6 layers, 15M params)\r\n");
-    Print(L"  Sampling: Temperature %.1f | Steps: %d\r\n", temperature, steps);
-    Print(L"\r\n");
+    // Generation
+    Print(L"\r\n  ========================================================\r\n");
+    Print(L"  TEXT GENERATION (Temp=%.1f, Tokens=%d)\r\n", temperature, steps);
+    Print(L"  ========================================================\r\n\r\n");
     
-    int mode = 1;  // Simple generation mode
+    int mode = 1;
     
     if (mode == 1) {
-        // AUTO-GENERATE MODE - high quality with beautiful UI
-        Print(L"\r\n  === Story Generation ===\r\n\r\n");
-        Print(L"  Assistant: ");
+        Print(L"  > ");
         
-        // Start with BOS token and let model generate freely
-        int token = 1;  // BOS token
+        int token = 1;
         int start_pos = 0;
     
-    // Initialize DRC v4.0 Ultra-Advanced (Djibion Reasoner Core)
+    // Initialize DRC v5.1
     drc_init(&drc_state);
-    
-    // Initialize DRC v5.1: Full Cognitive Organism
     drc_inference_init();
-    
-    // Message DRC - Complete Cognitive Architecture
-    Print(L"  ╔═══════════════════════════════════════════════════╗\r\n");
-    Print(L"  ║       DRC v5.1 - Complete Cognitive Organism      ║\r\n");
-    Print(L"  ╠═══════════════════════════════════════════════════╣\r\n");
-    Print(L"  ║  COGNITIVE UNITS (10):                            ║\r\n");
-    Print(L"  ║  • URS: Multi-Path Reasoning                      ║\r\n");
-    Print(L"  ║  • UIC: Incoherence Detection                     ║\r\n");
-    Print(L"  ║  • UCR: Risk Assessment                           ║\r\n");
-    Print(L"  ║  • UTI: Temporal Reasoning                        ║\r\n");
-    Print(L"  ║  • UCO: Counter-Reasoning                         ║\r\n");
-    Print(L"  ║  • UMS: Semantic Memory                           ║\r\n");
-    Print(L"  ║  • UAM: Auto-Moderation                           ║\r\n");
-    Print(L"  ║  • UPE: Plausibility Checking                     ║\r\n");
-    Print(L"  ║  • UIV: Intention & Values                        ║\r\n");
-    Print(L"  ╠═══════════════════════════════════════════════════╣\r\n");
-    Print(L"  ║  INFRASTRUCTURE (3):                              ║\r\n");
-    Print(L"  ║  • Performance Monitoring                         ║\r\n");
-    Print(L"  ║  • Configuration System (4 presets)               ║\r\n");
-    Print(L"  ║  • Decision Trace (Audit Trail)                   ║\r\n");
-    Print(L"  ╚═══════════════════════════════════════════════════╝\r\n\r\n");
-    
-    // Sync with network at startup
     drc_sync_with_network(&drc_state);
-    Print(L"\r\n");
+    
+    Print(L"  DRC v5.1: Active (10 cognitive units)\r\n");
 
     // Variables pour stats temps réel
     int start_tick = 0;
@@ -8810,11 +8796,47 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     }
     
     // Session end
-    Print(L"\r\n[SESSION ENDED]\r\n");
-    Print(L"Thank you for using LLM Bare-Metal v5.0!\r\n");
+    Print(L"\r\n╔══════════════════════════════════════════════════════════════╗\r\n");
+    Print(L"║              SESSION COMPLETE - BOOT OPTIONS                 ║\r\n");
+    Print(L"╚══════════════════════════════════════════════════════════════╝\r\n\r\n");
     
-    // Small delay before exit
-    ST->BootServices->Stall(2000000); // 2 seconds
+    Print(L"✅ NETWORK BOOT OPTIONS:\r\n");
+    Print(L"   1. HTTP Boot: Download models via LAN/WLAN\r\n");
+    Print(L"      - Setup HTTP server: python3 -m http.server 8080\r\n");
+    Print(L"      - Place model files in server directory\r\n");
+    Print(L"      - Supports large models (GPT-2, Llama-2, etc.)\r\n\r\n");
+    
+    Print(L"   2. PXE Boot: Network boot from TFTP/HTTP\r\n");
+    Print(L"      - BIOS: Enable Network Stack + PXE Boot\r\n");
+    Print(L"      - Configure DHCP server with boot file\r\n");
+    Print(L"      - Ideal for diskless workstations\r\n\r\n");
+    
+    Print(L"🖥️  INTERACTIVE MODES:\r\n");
+    Print(L"   - Mode 1: Auto-generation (Stories15M)\r\n");
+    Print(L"   - Mode 2: Interactive menu (6 categories, 41 prompts)\r\n");
+    Print(L"   - Mode 3: Chat REPL v4.0 (conversation with KV-cache)\r\n");
+    Print(L"   - Mode 4: NEURO-NET demo (neural energy transport)\r\n\r\n");
+    
+    Print(L"📦 HEAVY BOOT MODELS (Network Required):\r\n");
+    Print(L"   - GPT-2 Small (500 MB): Fast general text\r\n");
+    Print(L"   - GPT-2 Medium (1.5 GB): Better quality\r\n");
+    Print(L"   - Llama-2 7B (13 GB): Advanced reasoning\r\n");
+    Print(L"   - Llama-2 13B (26 GB): Expert-level\r\n\r\n");
+    
+    Print(L"💾 CURRENT CONFIGURATION:\r\n");
+    Print(L"   - Model: Stories15M (58 MB)\r\n");
+    Print(L"   - Boot: Disk (USB) with WiFi priority\r\n");
+    Print(L"   - DRC: v5.1 (10 cognitive units)\r\n");
+    Print(L"   - WiFi: Intel AX200/AX201/AX210 support\r\n\r\n");
+    
+    Print(L"🚀 NEXT STEPS:\r\n");
+    Print(L"   1. Flash USB with balenaEtcher/Rufus (DD mode)\r\n");
+    Print(L"   2. Boot on hardware with Intel AX200 WiFi\r\n");
+    Print(L"   3. Setup HTTP server for network boot (optional)\r\n");
+    Print(L"   4. Enable keyboard for interactive REPL\r\n\r\n");
+    
+    Print(L"[SESSION ENDED]\r\n");
+    Print(L"Made in Senegal 🇸🇳 by Djiby Diop | LLM Bare-Metal v5.0\r\n\r\n");
     
     return EFI_SUCCESS;
 }

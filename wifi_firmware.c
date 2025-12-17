@@ -4,6 +4,10 @@
 
 #include "wifi_firmware.h"
 
+// GUIDs for file system access (extern - defined in GNU-EFI)
+extern EFI_GUID gEfiSimpleFileSystemProtocolGuid;
+extern EFI_GUID gEfiFileInfoGuid;
+
 /**
  * Load firmware file from disk
  * Week 2: File I/O implementation
@@ -13,22 +17,105 @@ EFI_STATUS wifi_firmware_load_file(
     const CHAR16 *filename,
     FirmwareContext *fw_ctx
 ) {
-    Print(L"\r\n[FIRMWARE] Loading %s...\r\n", filename);
-    
     // Clear firmware context
     SetMem(fw_ctx, sizeof(FirmwareContext), 0);
     
-    // TODO Week 2: Implement UEFI Simple File System Protocol
-    // 1. Get root filesystem
-    // 2. Open firmware file
-    // 3. Read file size
-    // 4. Allocate buffer
-    // 5. Read file contents
+    EFI_STATUS Status;
+    EFI_HANDLE *HandleBuffer = NULL;
+    UINTN HandleCount = 0;
     
-    Print(L"[FIRMWARE] ✗ File loading not yet implemented\r\n");
-    Print(L"[FIRMWARE] Next: Implement UEFI Simple File System Protocol\r\n");
+    // Locate all Simple File System handles
+    Status = uefi_call_wrapper(
+        SystemTable->BootServices->LocateHandleBuffer,
+        5,
+        ByProtocol,
+        &gEfiSimpleFileSystemProtocolGuid,
+        NULL,
+        &HandleCount,
+        &HandleBuffer
+    );
     
-    return EFI_NOT_READY;
+    if (EFI_ERROR(Status) || HandleCount == 0) {
+        return EFI_NOT_FOUND;
+    }
+    
+    // Try each filesystem
+    for (UINTN i = 0; i < HandleCount; i++) {
+        EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *FileSystem;
+        Status = uefi_call_wrapper(
+            SystemTable->BootServices->HandleProtocol,
+            3,
+            HandleBuffer[i],
+            &gEfiSimpleFileSystemProtocolGuid,
+            (VOID**)&FileSystem
+        );
+        
+        if (EFI_ERROR(Status)) continue;
+        
+        // Open root directory
+        EFI_FILE_PROTOCOL *Root;
+        Status = uefi_call_wrapper(FileSystem->OpenVolume, 2, FileSystem, &Root);
+        if (EFI_ERROR(Status)) continue;
+        
+        // Try to open firmware file
+        EFI_FILE_PROTOCOL *File;
+        Status = uefi_call_wrapper(
+            Root->Open,
+            5,
+            Root,
+            &File,
+            (CHAR16*)filename,
+            EFI_FILE_MODE_READ,
+            0
+        );
+        
+        if (EFI_ERROR(Status)) {
+            uefi_call_wrapper(Root->Close, 1, Root);
+            continue;
+        }
+        
+        // Get file size
+        EFI_FILE_INFO *FileInfo;
+        UINTN FileInfoSize = sizeof(EFI_FILE_INFO) + 512;
+        FileInfo = AllocatePool(FileInfoSize);
+        
+        Status = uefi_call_wrapper(File->GetInfo, 4, File, &gEfiFileInfoGuid, &FileInfoSize, FileInfo);
+        if (EFI_ERROR(Status)) {
+            FreePool(FileInfo);
+            uefi_call_wrapper(File->Close, 1, File);
+            uefi_call_wrapper(Root->Close, 1, Root);
+            continue;
+        }
+        
+        UINTN FileSize = FileInfo->FileSize;
+        FreePool(FileInfo);
+        
+        // Allocate buffer
+        UINT8 *Buffer = AllocatePool(FileSize);
+        if (!Buffer) {
+            uefi_call_wrapper(File->Close, 1, File);
+            uefi_call_wrapper(Root->Close, 1, Root);
+            continue;
+        }
+        
+        // Read file
+        Status = uefi_call_wrapper(File->Read, 3, File, &FileSize, Buffer);
+        
+        uefi_call_wrapper(File->Close, 1, File);
+        uefi_call_wrapper(Root->Close, 1, Root);
+        
+        if (!EFI_ERROR(Status)) {
+            fw_ctx->raw_data = Buffer;
+            fw_ctx->raw_size = FileSize;
+            FreePool(HandleBuffer);
+            return EFI_SUCCESS;
+        }
+        
+        FreePool(Buffer);
+    }
+    
+    if (HandleBuffer) FreePool(HandleBuffer);
+    return EFI_NOT_FOUND;
 }
 
 /**
@@ -183,54 +270,40 @@ EFI_STATUS wifi_firmware_test_load(
     EFI_SYSTEM_TABLE *SystemTable,
     WiFiDevice *device
 ) {
-    Print(L"\r\n========================================\r\n");
-    Print(L"  WIFI FIRMWARE - WEEK 2 TEST\r\n");
-    Print(L"========================================\r\n\r\n");
-    
+    // Firmware loading silencieux
     FirmwareContext fw_ctx;
     EFI_STATUS status;
     
-    // Try to load firmware file
     status = wifi_firmware_load_file(SystemTable, L"iwlwifi-cc-a0-72.ucode", &fw_ctx);
     if (EFI_ERROR(status)) {
-        Print(L"[FIRMWARE] File loading failed: %r\r\n", status);
         return status;
     }
     
-    // Parse firmware
     status = wifi_firmware_parse(&fw_ctx, fw_ctx.raw_data, fw_ctx.raw_size);
     if (EFI_ERROR(status)) {
-        Print(L"[FIRMWARE] Parsing failed: %r\r\n", status);
         wifi_firmware_free(&fw_ctx);
         return status;
     }
     
-    // Upload to device
     status = wifi_firmware_upload(device, &fw_ctx);
     if (EFI_ERROR(status)) {
-        Print(L"[FIRMWARE] Upload failed: %r\r\n", status);
         wifi_firmware_free(&fw_ctx);
         return status;
     }
     
-    // Start firmware
     status = wifi_firmware_start(device);
     if (EFI_ERROR(status)) {
-        Print(L"[FIRMWARE] Start failed: %r\r\n", status);
         wifi_firmware_free(&fw_ctx);
         return status;
     }
     
-    // Wait for ready
     status = wifi_firmware_wait_ready(device, 5000);
     if (EFI_ERROR(status)) {
-        Print(L"[FIRMWARE] Wait ready failed: %r\r\n", status);
         wifi_firmware_free(&fw_ctx);
         return status;
     }
     
     device->state = WIFI_STATE_FIRMWARE_LOADED;
-    Print(L"[FIRMWARE] ✓ Firmware loaded and running!\r\n\r\n");
     
     wifi_firmware_free(&fw_ctx);
     return EFI_SUCCESS;

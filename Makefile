@@ -41,6 +41,10 @@ wifi_ax200.o: wifi_ax200.c wifi_ax200.h
 wifi_firmware.o: wifi_firmware.c wifi_firmware.h wifi_ax200.h
 	$(CC) $(CFLAGS) -msse2 -c wifi_firmware.c -o wifi_firmware.o
 
+# Compile wifi_wpa2.c (WPA2 crypto)
+wifi_wpa2.o: wifi_wpa2.c wifi_wpa2.h
+	$(CC) $(CFLAGS) -msse2 -c wifi_wpa2.c -o wifi_wpa2.o
+
 # DRC module compilation - Full cognitive architecture
 DRC_DIR = drc
 DRC_INCLUDES = -I$(DRC_DIR) -I.
@@ -126,8 +130,8 @@ $(LLAMA2_OBJ): llama2_efi.c
 	$(CC) $(CFLAGS) $(DRC_INCLUDES) -msse2 -c llama2_efi.c -o $(LLAMA2_OBJ)
 
 # Link llama2_efi with all modules
-llama2.so: $(LLAMA2_OBJ) network_boot.o wifi_ax200.o wifi_firmware.o $(DRC_OBJS)
-	ld $(LDFLAGS) $(LLAMA2_OBJ) network_boot.o wifi_ax200.o wifi_firmware.o $(DRC_OBJS) -o llama2.so $(LIBS)
+llama2.so: $(LLAMA2_OBJ) network_boot.o wifi_ax200.o wifi_firmware.o wifi_wpa2.o $(DRC_OBJS)
+	ld $(LDFLAGS) $(LLAMA2_OBJ) network_boot.o wifi_ax200.o wifi_firmware.o wifi_wpa2.o $(DRC_OBJS) -o llama2.so $(LIBS)
 
 # Convert llama2 to EFI
 $(LLAMA2): llama2.so
@@ -137,7 +141,7 @@ $(LLAMA2): llama2.so
 
 # Clean build artifacts
 clean:
-	rm -f $(LLAMA2_OBJ) network_boot.o wifi_ax200.o wifi_firmware.o llama2.so $(LLAMA2)
+	rm -f $(LLAMA2_OBJ) network_boot.o wifi_ax200.o wifi_firmware.o wifi_wpa2.o llama2.so $(LLAMA2)
 	rm -f drc_integration.o
 	rm -f $(DRC_DIR)/*.o
 

@@ -1,0 +1,68 @@
+[2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01HBdsDxe: loading Boot0001 "UEFI QEMU HARDDISK QM00001 " from PciRoot(0x0)/Pci(0x1,0x1)/Ata(Primary,Master,0x0)
+BdsDxe: starting Boot0001 "UEFI QEMU HARDDISK QM00001 " from PciRoot(0x0)/Pci(0x1,0x1)/Ata(Primary,Master,0x0)
+[2J[01;01H
+
+  ========================================================
+
+         B A R E - M E T A L   N E U R A L   L L M
+
+  ========================================================
+
+  Transformer 15M | 6 layers x 288 dimensions
+
+  Powered by DRC v5.1 (Djibion Reasoning Core)
+  URS: Multi-Path Speculative Reasoning Engine
+
+  ARM Optimized Math | Flash Attention | UEFI
+
+  Made in Senegal by Djiby Diop
+
+  ========================================================
+
+  System: UEFI x86_64 | Memory: 512 MB
+  CPU: SSE2 Optimized | Math: ARM Routines v2.0
+
+  [WIFI] Checking for Intel WiFi hardware...
+
+========================================
+  INTEL AX200 WIFI DRIVER - WEEK 1
+  PCI ENUMERATION ACTIVE
+========================================
+
+[WIFI] Scanning PCI bus 0-1 for Intel WiFi...
+[WIFI] ✓ Found Intel WiFi at 00:14.3
+[WIFI] Vendor: 0x8086, Device: 0x2723
+[WIFI] BAR0 Address: 0x00000000F7D00000
+[WIFI] MAC: 02:00:86:27:23:17
+[WIFI] ✓ PCI detection complete!
+
+  [WIFI] Status: ✓ DETECTED (Intel AX200/AX201)
+  [WIFI] Mode: WiFi 6 (802.11ax) ready
+  [WIFI] Testing firmware loading framework...
+
+========================================
+  WIFI FIRMWARE - WEEK 2 TEST
+========================================
+
+
+[FIRMWARE] Loading iwlwifi-cc-a0-72.ucode...
+[FIRMWARE] ✗ Failed to get filesystem: Unsupported
+[FIRMWARE] File loading failed: Unsupported
+  [NETWORK] Checking wired network capability...
+  [NETWORK] Status: ✓ AVAILABLE (TCP/IP stack detected)
+  [NETWORK] Mode: HYBRID (Network Boot with disk fallback)
+
+
+  Loading stories15M.bin (420 MB from disk)...
+  Opening file...
+  Reading config...
+  Config read successfully
+Model config: dim=288, n_layers=6, n_heads=6, n_kv_heads=6, vocab=32000
+  seq_len=256, rope_theta=0.00000000000000000009955588
+  [MODE] FP32 full precision (INT8 disabled for quality)
+  Validating model size...
+  Calculating weights size...
+  Allocating 57 MB for weights...
+  Reading weights from file... (60 MB, please wait)
+  Total size: 57 MB
+  Progress: 

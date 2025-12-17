@@ -1,0 +1,316 @@
+╔════════════════════════════════════════════════════════════════════╗
+║           GUIDE RUFUS - FLASH USB BAREMETAL LLM                    ║
+╚════════════════════════════════════════════════════════════════════╝
+
+FICHIER À FLASHER: llm-baremetal-complete.img (512 MB)
+EMPLACEMENT: C:\Users\djibi\Desktop\baremetal\llm-baremetal\
+
+════════════════════════════════════════════════════════════════════
+
+ÉTAPE 1: PRÉPARER LA CLÉ USB
+─────────────────────────────
+
+1. Insérer une clé USB d'au moins 512 MB
+2. ⚠️  ATTENTION: Toutes les données seront EFFACÉES
+3. Sauvegarder vos données importantes avant de continuer
+
+════════════════════════════════════════════════════════════════════
+
+ÉTAPE 2: CONFIGURATION RUFUS
+─────────────────────────────
+
+1. Lancer Rufus (avec droits administrateur)
+
+2. Sélection du périphérique:
+   ┌────────────────────────────────────────┐
+   │ Périphérique: [Votre clé USB ▼]      │
+   └────────────────────────────────────────┘
+   └─> Choisir votre clé USB dans la liste
+
+3. Sélection de l'image:
+   ┌────────────────────────────────────────┐
+   │ Sélection: [SÉLECTIONNER]             │
+   └────────────────────────────────────────┘
+   └─> Cliquer "SÉLECTIONNER"
+   └─> Navigate to: C:\Users\djibi\Desktop\baremetal\llm-baremetal\
+   └─> Sélectionner: llm-baremetal-complete.img
+   └─> Cliquer "Ouvrir"
+
+4. Rufus détectera le type d'image:
+   
+   SI MESSAGE: "ISOHybrid image detected" OU "Image hybride détectée"
+   ┌────────────────────────────────────────────────────────┐
+   │ Cette image est une image ISOHybrid                   │
+   │ Comment voulez-vous l'écrire?                         │
+   │                                                        │
+   │ ● Écrire en mode Image DD (recommandé)               │
+   │ ○ Écrire en mode Image ISO                           │
+   └────────────────────────────────────────────────────────┘
+   
+   ⭐ CHOISIR: "Écrire en mode Image DD" (ou "Write in DD Image mode")
+   
+   SI PAS DE MESSAGE: Continuer normalement
+
+5. Paramètres Rufus (vérifier):
+   
+   Schéma de partition:
+   ┌────────────────────────────────────────┐
+   │ Schéma: GPT                           │
+   └────────────────────────────────────────┘
+   
+   Système de destination:
+   ┌────────────────────────────────────────┐
+   │ Système: UEFI (non CSM)               │
+   └────────────────────────────────────────┘
+   
+   Nom de volume: (ne pas modifier, laissez LLMBOOT)
+   
+   Système de fichiers: (sera ignoré en mode DD)
+   
+   Taille d'unité d'allocation: (sera ignoré en mode DD)
+
+6. Options avancées (facultatif):
+   └─> Pas besoin de modifier
+
+════════════════════════════════════════════════════════════════════
+
+ÉTAPE 3: LANCER LE FLASH
+─────────────────────────
+
+1. Vérifier une dernière fois:
+   ✓ Périphérique = Votre clé USB
+   ✓ Image = llm-baremetal-complete.img
+   ✓ Mode = DD Image (si proposé)
+   ✓ Schéma = GPT
+   ✓ Système = UEFI
+
+2. Cliquer sur "DÉMARRER" (ou "START")
+
+3. Avertissement final:
+   ┌────────────────────────────────────────────────────────┐
+   │ ATTENTION: Toutes les données sur le périphérique     │
+   │ seront détruites. Continuer?                          │
+   │                                                        │
+   │          [Annuler]          [OK]                      │
+   └────────────────────────────────────────────────────────┘
+   
+   └─> Cliquer "OK"
+
+4. Attendre la copie:
+   ┌────────────────────────────────────────┐
+   │ Status: Écriture...                   │
+   │ [████████████████░░░░░░░░] 67%       │
+   └────────────────────────────────────────┘
+   
+   Durée: 2-5 minutes (selon vitesse USB)
+
+5. Vérification automatique:
+   Rufus peut vérifier l'image après écriture
+   └─> Laisser faire si proposé
+
+6. Fin:
+   ┌────────────────────────────────────────┐
+   │ Status: PRÊT                          │
+   │ [████████████████████████] 100%       │
+   └────────────────────────────────────────┘
+   
+   └─> Cliquer "FERMER"
+
+════════════════════════════════════════════════════════════════════
+
+PROBLÈMES COURANTS RUFUS
+─────────────────────────
+
+❌ "Impossible d'ouvrir le fichier"
+   CAUSE: Rufus ne supporte pas tous les formats .img
+   SOLUTION:
+   └─> Télécharger balenaEtcher: https://etcher.balena.io/
+   └─> OU utiliser dd via WSL (voir ci-dessous)
+
+❌ "Périphérique en cours d'utilisation"
+   CAUSE: Windows utilise la clé USB
+   SOLUTION:
+   └─> Explorateur → Éjecter la clé
+   └─> Attendre 5 secondes
+   └─> Réessayer
+
+❌ "Accès refusé"
+   CAUSE: Rufus n'a pas les droits admin
+   SOLUTION:
+   └─> Clic droit sur Rufus → Exécuter en tant qu'administrateur
+
+❌ Rufus freeze/bloque
+   CAUSE: Problème USB ou antivirus
+   SOLUTION:
+   └─> Fermer Rufus (Gestionnaire de tâches si nécessaire)
+   └─> Débrancher/rebrancher USB
+   └─> Désactiver temporairement l'antivirus
+   └─> Réessayer
+
+════════════════════════════════════════════════════════════════════
+
+ALTERNATIVE 1: balenaEtcher (PLUS SIMPLE)
+──────────────────────────────────────────
+
+Si Rufus ne fonctionne pas:
+
+1. Télécharger: https://etcher.balena.io/
+2. Installer et lancer balenaEtcher
+3. "Flash from file" → llm-baremetal-complete.img
+4. "Select target" → Votre clé USB
+5. "Flash!" → Attendre la fin
+6. Vérification automatique incluse
+
+Avantages:
+✓ Interface plus simple
+✓ Supporte tous formats d'images
+✓ Vérification automatique
+✓ Fonctionne sur Windows, Mac, Linux
+
+════════════════════════════════════════════════════════════════════
+
+ALTERNATIVE 2: dd via WSL
+─────────────────────────
+
+Si vous préférez la ligne de commande:
+
+1. Identifier la clé USB:
+   wsl lsblk
+   
+   Exemple de sortie:
+   NAME   SIZE TYPE MOUNTPOINT
+   sda    8G  disk             ← Votre clé USB
+   ├─sda1 8G  part /media/usb
+
+2. Flasher (ATTENTION au /dev/sdX!):
+   wsl sudo dd if=/mnt/c/Users/djibi/Desktop/baremetal/llm-baremetal/llm-baremetal-complete.img of=/dev/sdX bs=4M status=progress conv=fsync
+   
+   Remplacer /dev/sdX par votre périphérique (ex: /dev/sdb)
+   ⚠️  VÉRIFIER 3 FOIS le périphérique pour ne pas effacer le mauvais disque!
+
+3. Synchroniser:
+   wsl sudo sync
+
+4. Éjecter:
+   wsl sudo eject /dev/sdX
+
+════════════════════════════════════════════════════════════════════
+
+APRÈS LE FLASH: CONFIGURATION BIOS
+───────────────────────────────────
+
+⚠️  ÉTAPES CRITIQUES AVANT DE BOOTER ⚠️
+
+1. Redémarrer le PC avec la clé USB insérée
+
+2. Entrer dans le BIOS:
+   └─> Au démarrage: Appuyer sur DEL, F2, F10, ou F12
+   └─> Dell: F2
+   └─> HP: F10 ou ESC
+   └─> Lenovo: F1 ou F2
+   └─> ASUS/MSI/Gigabyte: DEL
+
+3. DÉSACTIVER SECURE BOOT ★★★ OBLIGATOIRE ★★★
+   └─> Security → Secure Boot → [Disabled]
+   └─> Boot → Secure Boot → [Disabled]
+   └─> Sans ceci, le PC ne bootera PAS
+
+4. MODE UEFI (pas Legacy):
+   └─> Boot → Boot Mode → [UEFI]
+   └─> Boot → Launch CSM → [Disabled]
+
+5. BOOT ORDER:
+   Option A: Permanent
+   └─> Boot → Boot Priority → USB en position #1
+   
+   Option B: Temporaire (plus simple)
+   └─> Sauvegarder et sortir du BIOS
+   └─> Redémarrer
+   └─> Appuyer sur F12 pendant le boot
+   └─> Sélectionner la clé USB dans le menu
+
+6. Sauvegarder:
+   └─> F10 → Save and Exit
+   └─> Ou Exit → Save Changes and Exit
+
+════════════════════════════════════════════════════════════════════
+
+BOOT ET TEST
+────────────
+
+1. PC redémarre avec USB insérée
+2. Si F12 utilisé: Sélectionner USB dans le menu
+3. Attendre le boot (5-10 secondes)
+
+ÉCRAN ATTENDU:
+┌──────────────────────────────────────────────────────────┐
+│                                                          │
+│  ========================================================│
+│                                                          │
+│         B A R E - M E T A L   N E U R A L   L L M       │
+│                                                          │
+│  ========================================================│
+│                                                          │
+│  Transformer 15M | 6 layers x 288 dimensions            │
+│                                                          │
+│  Powered by DRC v5.1 (Djibion Reasoning Core)           │
+│  URS: Multi-Path Speculative Reasoning Engine           │
+│                                                          │
+│  Made in Senegal by Djiby Diop                          │
+│                                                          │
+│  [WIFI] Checking for Intel WiFi hardware...             │
+│  [WIFI] ✓ Found Intel WiFi at 00:14.3                  │
+│  [WIFI] Vendor: 0x8086, Device: 0x2723                 │
+│  [WIFI] Status: ✓ DETECTED (Intel AX200/AX201)        │
+│                                                          │
+│  [FIRMWARE] Loading iwlwifi-cc-a0-72.ucode...           │
+│  [FIRMWARE] ✓ Loaded successfully (1329780 bytes)      │
+│                                                          │
+│  [WIFI] Radio ON, MAC: XX:XX:XX:XX:XX:XX               │
+│  [WIFI] Scanning networks...                            │
+│  Networks found:                                         │
+│    [1] MyWiFi (WPA2, -45 dBm, CH 6)                    │
+│    [2] NeighborWiFi (WPA2, -67 dBm, CH 11)            │
+│    ...                                                   │
+│                                                          │
+│  Loading stories15M.bin (58 MB)...                      │
+│  Model loaded successfully                               │
+│                                                          │
+│  > Enter prompt: _                                       │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+
+SI PROBLÈME:
+└─> Voir DIAGNOSTIC_BOOT.txt pour le dépannage complet
+
+════════════════════════════════════════════════════════════════════
+
+CHECKLIST COMPLÈTE
+──────────────────
+
+Flash USB:
+[ ] Clé USB insérée (512 MB minimum)
+[ ] Données sauvegardées
+[ ] Rufus lancé (ou balenaEtcher)
+[ ] Image sélectionnée: llm-baremetal-complete.img
+[ ] Mode: DD Image
+[ ] Flash terminé avec succès
+[ ] Vérification OK
+
+Configuration BIOS:
+[ ] Secure Boot DÉSACTIVÉ ★★★
+[ ] Boot Mode: UEFI (pas Legacy)
+[ ] Boot Order: USB en premier (ou F12 ready)
+[ ] Fast Boot désactivé (optionnel)
+[ ] Paramètres sauvegardés
+
+Matériel:
+[ ] PC avec Intel AX200/AX201/AX210 WiFi
+[ ] RAM: 512 MB minimum
+[ ] UEFI firmware (pas BIOS Legacy)
+
+Prêt? → Insérer USB → Redémarrer → F12 → Boot USB!
+
+════════════════════════════════════════════════════════════════════
+
+Bon test! 🚀

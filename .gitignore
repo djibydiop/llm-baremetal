@@ -8,6 +8,8 @@
 
 # Models (on GitHub Releases only)
 *.bin
+*.safetensors
+*.gguf
 
 # Firmware (on GitHub Releases only)
 *.ucode
@@ -16,11 +18,48 @@
 # OVMF (download separately)
 OVMF.fd
 
-# Logs
+# Logs and debug files
 *.log
 *.txt
+qemu*.txt
+DIAGNOSTIC.md
 
-# Temporaires
+# Temporary files
 SESSION_*.md
 GITHUB_UPLOAD.md
 serve_model.py
+test-*.ps1
+
+# Memory experiments (non essentiels)
+memory_adversarial.h
+memory_artistic.h
+memory_blockchain.h
+memory_consciousness.h
+memory_cosmic.h
+memory_distributed.h
+memory_dna.h
+memory_infinite.h
+memory_lightning.h
+memory_liquid.h
+memory_negative.h
+memory_neural.h
+memory_oracle.h
+memory_quantum.h
+memory_quantum2.h
+memory_schizophrenic.h
+memory_sentinel.h
+memory_speculative.h
+memory_timetravel.h
+memory_zones.h.broken
+memory_zones_fixed.h
+
+# USB mount
+usb_mount/
+
+# VS Code
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+.venv/

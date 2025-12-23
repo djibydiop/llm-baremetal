@@ -1,334 +1,207 @@
-# LLM Bare-Metal - Cognitive AI Without OS
+# LLM Bare-Metal Kernel
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-UEFI%20x86--64-lightgrey.svg)](https://en.wikipedia.org/wiki/Unified_Extensible_Firmware_Interface)
+**A UEFI-based bare-metal LLM inference kernel running directly on x86_64 hardware**
 
-> **Run language models with cognitive reasoning directly on bare metal (UEFI)**
+Made in Senegal 🇸🇳 by Djiby Diop - December 2025
 
-**Boot from USB. Run AI with DRC v6.0 cognitive system. No OS required.**
+## 🎯 What is this?
 
----
+This project runs a **15M parameter language model** (stories15M) directly on bare-metal hardware without any operating system. It boots from USB and generates text at ~1 token/second.
 
-## Features
+## 📦 Project Structure
 
-### DRC v6.0 - Djibion Reasoning Core
-- **10 Cognitive Units**: URS, Verification, UIC, UCR, UTI, UCO, UMS, UAM, UPE, UIV
-- **9 Infrastructure Systems**: Performance, Config, Trace, SelfDiag, SemanticCluster, TimeBudget, Bias, Emergency, RadioCognitive
-- **Complete reasoning system** running on bare metal
-- **Speculative reasoning** before each token
-- **Token verification** and quality control
-
-### Technical
-- **Bare-metal execution**: Runs directly in UEFI without OS
-- **Network streaming**: Load models via HTTP with Range requests (RFC 7233)
-- **WiFi support**: Intel AX200/AX210 WiFi 6 cards
-- **Universal ModelBridge**: Auto-detects GGUF, .bin, SafeTensors formats
-- **Chat REPL**: Interactive AI conversations
-
----
-
-## 🎯 Features
-
-### Core System
-- ✅ **Network Boot** - Download models via HTTP (TCP4 protocol on UEFI)
-- 📡 **WiFi 6 Driver** - Intel AX200/AX201 bare-metal driver (Phase 1 complete)
-- 🧠 **110M Model** - Stories110M (768 dims, 12 layers, 110M params, 418 MB)
-- ✅ **UEFI Native** - Boots on any modern x86-64 hardware (2010+)
-- ✅ **USB Bootable** - Flash to USB and boot instantly
-- ✅ **SSE2 Optimized** - Hardware acceleration for matrix ops
-- ✅ **BPE Tokenizer** - Full 32K vocabulary
-- ✅ **DRC v4.0** - Djibion Reasoner Core
-
-### Network Features (NEW!)
-- 🌐 **HTTP Client** - Complete HTTP/1.0 implementation
-- 📥 **Model Download** - Stream models from remote server
-- 🔄 **Hybrid Boot** - Network → Disk fallback
-- 📡 **WiFi 6** - Intel AX200 driver (in development)
-- 🔐 **WPA2** - Secure WiFi (roadmap)
-
-### Technical Specs
-- 🧠 **Models**: Stories15M (60 MB) + Stories110M (418 MB)
-- ⚡ **Speed**: ~12 tokens/sec on modern hardware
-- 🌐 **Network**: TCP4 + HTTP/1.0 + WiFi 6 (Phase 1)
-- 🔧 **Platform**: UEFI x86_64 (GNU-EFI 3.0+)
-- 💾 **Memory**: 1024 MB RAM (for 110M model)
-- 📦 **Total Size**: 420 MB (model + tokenizer + code)
-
----
-## Quick Start
-
-### Test in QEMU
-
-```bash
-# Build
-make clean && make llama2.efi
-
-# Create disk image with model
-./download_stories110m.sh  # Downloads stories15M.bin (60MB)
-make disk
-
-# Run in QEMU
-qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd \
-  -drive file=qemu-test.img,format=raw -m 512M
 ```
-
-### Network Streaming (for models >512MB)
-
-Large models can be streamed over HTTP to bypass UEFI memory limits:
-
-```bash
-# 1. Start HTTP server (serves models with Range support)
-python serve_model.py
-
-# 2. Run QEMU with network
-qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd \
-  -drive file=qemu-test.img,format=raw -m 512M \
-  -net nic,model=e1000 -net user
+llm-baremetal/
+├── llama2_efi.c           # Main kernel (350KB) - UEFI entry point & inference loop
+├── llama2.efi             # Compiled kernel (1MB) - bootable EFI executable
+├── llama2_USB.img         # Bootable USB image (200MB)
+├── stories15M.bin         # Model weights (58MB, 15M parameters)
+├── tokenizer.bin          # Tokenizer vocabulary (424KB, 32K tokens)
+├── Makefile               # Build system
+├── OVMF.fd                # UEFI firmware for QEMU testing
+├── run-qemu.ps1           # QEMU test script
+└── deploy-usb.sh          # USB deployment script
 ```
-
-The system downloads 4MB chunks on-demand from `http://10.0.2.2:8080/`
-
-## Architecture
 
 ### Core Components
 
-- **llama2_efi.c**: Transformer implementation
-  - Self-attention with RoPE encoding
-  - SwiGLU activation
-  - RMSNorm normalization
-  - KV-cache
-  
-- **network_boot.c**: HTTP streaming client
-  - TCP4 protocol
-  - Range request support (RFC 7233)
-  - 4MB chunk buffer
-  
-- **wifi_ax200.c**: WiFi 6 driver
-  - Intel AX200/AX210 support
-  - WPA2/WPA3 authentication
-  
-- **Tokenizer**: SentencePiece BPE decoder
+- **Inference Engine**: `llama2_efi.c` - Complete Transformer implementation
+- **Memory Management**: `heap_allocator.h` - 100MB bump allocator
+- **Math Optimizations**: `matmul_optimized.h`, `tinyblas.c` - SSE2 matrix ops
+- **DRC System**: `drc_v5.c` + modules - Cognitive reasoning layer (10 units)
+- **Network (experimental)**: `network_boot.c`, WiFi drivers - For model streaming
 
-### Streaming Protocol
+### Memory Systems (Advanced Features - Currently Disabled)
 
-HTTP Range requests allow loading models larger than UEFI memory:
+19 revolutionary memory systems in `memory_*.h` files:
+- Consciousness, Healing, Time-Travel, Quantum, Neural, etc.
+- **Status**: Disabled for hardware compatibility
+- Future work: Re-enable with proper testing
 
-```
-GET /model.bin HTTP/1.0
-Range: bytes=0-4194303
-Host: 10.0.2.2
+## 🚀 Quick Start
 
-→ 206 Partial Content
-Content-Range: bytes 0-4194303/417566976
-[4MB chunk]
+### 1. Test in QEMU (Recommended)
+
+```powershell
+.\run-qemu.ps1
 ```
 
-Each layer loads on-demand, bypassing the 512MB limit.
+Or manually:
+```powershell
+qemu-system-x86_64 -bios OVMF.fd -drive format=raw,file=llama2_USB.img -m 512M
+```
 
----
+### 2. Flash to USB
 
-## 🔧 Building from Source
+**Using Rufus (Windows):**
+1. Open Rufus as Administrator
+2. Select your USB drive
+3. Click "SELECT" → Choose `llama2_USB.img`
+4. **Set mode to "DD Image"** (important!)
+5. Click "START"
 
-### Prerequisites
-- x86-64 PC (2010 or newer)
-- WSL2 (Windows) or Linux
-- gcc, gnu-efi, qemu
-- 4GB+ RAM
-- USB stick (128MB+) for real hardware testing
-
-### Build Steps
-
+**Using dd (Linux/WSL):**
 ```bash
-# 1. Install dependencies (Ubuntu/Debian)
-sudo apt update
-sudo apt install build-essential gnu-efi qemu-system-x86 mtools dosfstools
-
-# 2. Clone repository
-git clone https://github.com/djibydiop/llm-baremetal.git
-cd llm-baremetal
-
-# 3. Download model (60 MB)
-./download_stories110m.sh
-# This downloads stories15M.bin from HuggingFace
-
-# 4. Download tokenizer
-wget https://github.com/karpathy/llama2.c/raw/master/tokenizer.bin
-
-# 5. Build
-make clean && make
-
-## Requirements
-
-- x86-64 CPU (Intel/AMD)
-- 512MB+ RAM
-- UEFI firmware
-- Linux with GNU-EFI tools
-
-## Build
-
-```bash
-# Install dependencies (Ubuntu/Debian)
-sudo apt-get install gnu-efi gcc make
-
-# Build
-make clean && make llama2.efi
-
-# Create disk image
-./download_stories110m.sh
-make disk
+sudo dd if=llama2_USB.img of=/dev/sdX bs=4M status=progress
 ```
 
-## License
+### 3. Boot on Real Hardware
 
-MIT - See LICENSE file
+1. Insert USB drive
+2. Enter BIOS/UEFI boot menu (F12, F11, or DEL)
+3. Select USB drive
+4. Watch the model generate text!
 
----
+## 🔧 Build from Source
 
-## 🐛 Troubleshooting
+**Requirements:**
+- WSL or Linux
+- gcc, GNU-EFI libraries
+- make
 
-### Boot stops at "127580KB read"
-**Solution:** Model file too large for your UEFI firmware. Use `stories15M.bin` (60MB) instead of `stories110M.bin` (420MB).
+**Compile:**
+```bash
+make
+```
 
-### "No bootable device" error
-**Solution:** 
-1. Ensure USB is FAT32 formatted
-2. Check UEFI boot mode (not Legacy)
-3. Disable Secure Boot in BIOS
+**Create USB image:**
+```bash
+./deploy-usb.sh
+```
 
-### "AVX2 not supported" error
-**Solution:** Your CPU doesn't support AVX2. Minimum requirement is Intel Haswell (2013) or AMD Excavator (2015).
+## 📊 Current Status
 
-### Slow inference (< 10 tokens/sec)
-**Solution:**
-1. Enable AVX2 in BIOS (if available)
-2. Use smaller model (stories15M vs stories110M)
-3. Increase RAM allocation in QEMU/VM
+### ✅ Working
+- UEFI boot on real hardware
+- Model loading (60MB)
+- Tokenizer loading (433KB)
+- Token generation (~1 tok/s)
+- 100MB heap allocation
+- SSE2 optimized matmul
+- QEMU emulation
 
----
+### ⚠️ Known Issues
+- **Text display on hardware**: Token generation works but decoded text shows `<unk>`
+  - **Debug enabled**: Displays logit values and selected tokens
+  - **QEMU works fine**: Same code displays text correctly in emulator
+  - **Likely cause**: Hardware-specific issue with forward pass or model loading
 
-## � Documentation
+### 🔍 Debug Output
+```
+[DEBUG] Logits check: [0]=-15 [1]=-12 [2]=-18 [3]=-11
+[DEBUG] Selected token=2501 maxval=19
+[9038] Once upon a time...
+```
 
-| Document | Description |
-|----------|-------------|
-| [USB_BOOT_GUIDE.md](USB_BOOT_GUIDE.md) | How to flash and boot from USB |
-| [HARDWARE_BOOT.md](HARDWARE_BOOT.md) | Hardware compatibility notes |
-| [ROADMAP.md](ROADMAP.md) | Development roadmap |
-| [llama2_efi.c](llama2_efi.c) | Main source code (8,491 lines) |
+On real hardware, if you see token 0 (`<unk>`) repeatedly, the debug shows what's wrong.
 
----
+## 🎛️ Configuration
 
-## ❓ FAQ
+**Memory:**
+- Heap: 100MB (line 7234 in llama2_efi.c)
+- Model: 58MB
+- KV Cache: ~10MB
+- Scratch: ~5MB
 
-**Q: Why bare-metal? Why not just run on Linux?**  
-A: Zero OS overhead = faster boot, simpler debugging, perfect for embedded systems, and it's just **way cooler** 😎
+**Model:**
+- Architecture: Llama2-based Transformer
+- Parameters: 15M (6 layers, 288 dims, 6 heads)
+- Vocabulary: 32K tokens
+- Context: 256 tokens
+- Precision: FP32
 
-**Q: Can I use bigger models?**  
-A: Currently optimized for 15M-110M params. Larger models (8B+) need quantization or more RAM.
+**Compilation Flags:**
+- `-O2`: Optimization level
+- `-msse2`: SSE2 only (no AVX2)
+- `-fno-asynchronous-unwind-tables`: Smaller binary
 
-**Q: Does it work on my PC?**  
-A: Any x86-64 PC from 2010+ with UEFI should work. Tested on Dell, HP, Lenovo, custom builds.
+## 🧪 Troubleshooting
 
-**Q: How fast is it?**  
-A: ~12 tokens/sec on modern hardware. Boot to text generation in 5-10 seconds.
+### Boot fails
+- **Check BIOS**: Enable UEFI boot, disable Secure Boot
+- **Check USB**: Use DD mode in Rufus, not ISO mode
+- **Check drive**: USB must be FAT32 with `/EFI/BOOT/BOOTX64.EFI`
 
-**Q: Can I train models with this?**  
-A: No, this is inference only. Use PyTorch/JAX for training, then load the weights here.
+### Generates `<unk>` tokens
+- **Check debug output**: Look for logit values
+- **If all logits are 0**: Forward pass issue
+- **If token always 0**: Sampling issue
+- **If logits vary but token 0**: Check argmax logic
 
-**Q: Why is there no color in the output?**  
-A: UEFI's `SetAttribute()` caused system freezes on some firmware. Plain text = maximum compatibility.
+### Slow performance
+- Normal: ~1 tok/s on 15M model
+- Optimize: Enable AVX2 (requires CPU support)
+- Future: Quantization to INT8/Q4
 
-**Q: Is this production-ready?**  
-A: Yes! Tested on real hardware. Use at your own risk, but it's stable.
+## 📖 Technical Details
 
----
+### Boot Process
+1. **UEFI loads** `BOOTX64.EFI` from `/EFI/BOOT/`
+2. **Heap init**: 100MB bump allocator
+3. **Model load**: Read `stories15M.bin` (60MB)
+4. **Tokenizer load**: Read `tokenizer.bin` (433KB)
+5. **Generation**: 150 tokens with temperature=0 (greedy)
 
-## 🤝 Contributing
+### Inference Loop
+```c
+for (int pos = 1; pos < steps; pos++) {
+    float* logits = forward(&transformer, token, pos);
+    int next = argmax(logits, vocab_size);
+    token = next;
+    char* piece = decode(vocab, token);
+    Print(L"%a", piece);
+}
+```
 
-We welcome contributions! Here's how:
+### Memory Layout
+```
+0x00000000 - UEFI firmware
+0x15775000 - Heap base (100MB)
+  ├─ Model weights (58MB)
+  ├─ KV cache (10MB)
+  ├─ Scratch buffers (5MB)
+  └─ Run state (~5MB)
+```
 
-1. **Star the repo** ⭐ if you find it useful
-2. **Fork** and create a feature branch
-3. **Add your use case** to examples/
-4. **Submit a PR** with improvements
-5. **Share** with the community
+## 🔮 Future Work
 
-**Areas we need help:**
-- LLaMA 3 integration
-- ARM64 port
-- Performance optimizations
-- More examples
-- Documentation improvements
+1. **Fix hardware text display** - Current priority
+2. **Quantization** - INT8/Q4 for faster inference
+3. **Larger models** - GPT-2 (500MB), Llama-2 (13GB) via network boot
+4. **Chat mode** - REPL with conversation history
+5. **Re-enable advanced systems** - 19 memory systems (when stable)
 
----
+## 📄 License
 
-## 🤝 Contributing
-
-Contributions welcome! Areas needing help:
-- ARM64 port (Raspberry Pi)
-- Larger model support (quantization)
-- Performance optimizations
-- Testing on more hardware
-
-1. Fork the repo → 2. Create feature branch → 3. Submit PR
-
----
-
-## 📜 License
-
-**MIT License** - See [LICENSE](LICENSE)
-
-**Credits:**
-- **llama2.c** by Andrej Karpathy - Base transformer implementation
-- **GNU-EFI** - UEFI development library  
-- **DRC v4.0** - Djibion Reasoner Core (original innovation)
-- **Optimized math** - Justine Tunney's powf implementation
-
----
+See LICENSE file
 
 ## 🙏 Acknowledgments
 
-- **Andrej Karpathy** (@karpathy) - For llama2.c and making AI education accessible
-- **The UEFI community** - For excellent documentation and tools
-- **TinyStories dataset** - For training the Stories15M model
-- **Everyone who tested** - Your feedback made this production-ready
+- Based on llama2.c by Andrej Karpathy
+- GNU-EFI for UEFI development
+- Stories15M model for testing
 
 ---
 
-## 🌍 Made in Senegal 🇸🇳
-
-Created in Dakar, Senegal. Pushing African tech innovation to the world.
-
----
-
-## 🔗 Connect & Share
-
-- 🐙 **GitHub**: https://github.com/djibydiop/llm-baremetal
-- 🐛 **Issues**: [Report bugs](https://github.com/djibydiop/llm-baremetal/issues)
-- 🐦 **Twitter/X**: [#LLMBareMetal](https://twitter.com/search?q=%23LLMBareMetal) [#BareMetalAI](https://twitter.com/search?q=%23BareMetalAI)
-- 🎥 **Demo Video**: _(Add your video link here)_
-
----
-
-<div align="center">
-
-### ⭐ Star this repo if it amazed you! ⭐
-
-**World's First Bare-Metal LLM • Made with ❤️ in Senegal 🇸🇳**
-
-_Boot AI in 5 seconds. No OS required. Just pure innovation._
-
-</div>
-
----
-
-## ⚠️ Important Notes
-
-1. **Model files NOT included** - Download `stories15M.bin` (60MB) and `tokenizer.bin` via `download_stories110m.sh`
-2. **UEFI only** - Does not work with Legacy BIOS mode
-3. **Hardware requirements** - x86-64 CPU (2010+), 512MB+ RAM, UEFI firmware
-4. **No colors** - Plain text for maximum compatibility (SetAttribute causes freezes on some firmware)
-
----
-
-**Last Updated:** December 14, 2025  
-**Version:** 6.0.0 (Production Ready)
+**Status**: Functional prototype with ongoing debugging for hardware compatibility
+**Last updated**: December 22, 2025

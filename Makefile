@@ -3,12 +3,13 @@
 # Architecture
 ARCH = x86_64
 
-# Compiler and flags
+# Compiler and flags (advanced optimizations)
 CC = gcc
 CFLAGS = -ffreestanding -fno-stack-protector -fpic \
          -fshort-wchar -mno-red-zone -I/usr/include/efi \
          -I/usr/include/efi/$(ARCH) -DEFI_FUNCTION_WRAPPER \
-         -O3 -funroll-loops -ffast-math -finline-functions
+         -O2 -msse2 \
+         -fno-asynchronous-unwind-tables
 
 LDFLAGS = -nostdlib -znocombreloc -T /usr/lib/elf_$(ARCH)_efi.lds \
           -shared -Bsymbolic -L/usr/lib \
@@ -21,10 +22,12 @@ TARGET = llm.efi
 CHATBOT = chatbot.efi
 HELLO = hello.efi
 LLAMA2 = llama2.efi
+TEST_KERNEL = test_llm_kernel.efi
 OBJ = llm_efi.o
 CHATBOT_OBJ = llm_chatbot.o
 HELLO_OBJ = hello_efi.o
 LLAMA2_OBJ = llama2_efi.o
+TEST_KERNEL_OBJ = test_llm_kernel.o
 
 # Default target
 all: $(LLAMA2)
@@ -44,6 +47,38 @@ wifi_firmware.o: wifi_firmware.c wifi_firmware.h wifi_ax200.h
 # Compile wifi_wpa2.c (WPA2 crypto)
 wifi_wpa2.o: wifi_wpa2.c wifi_wpa2.h
 	$(CC) $(CFLAGS) -msse2 -c wifi_wpa2.c -o wifi_wpa2.o
+
+# Compile wifi_802_11.c (802.11 protocol parsing)
+wifi_802_11.o: wifi_802_11.c wifi_802_11.h
+	$(CC) $(CFLAGS) -msse2 -c wifi_802_11.c -o wifi_802_11.o
+
+# DRC v5.0
+drc_v5.o: drc_v5.c drc_v5.h
+	$(CC) $(CFLAGS) -msse2 -c drc_v5.c -o drc_v5.o
+
+# Model Streaming 2.0
+model_streaming.o: model_streaming.c model_streaming.h
+	$(CC) $(CFLAGS) -msse2 -c model_streaming.c -o model_streaming.o
+
+# DRC Consensus
+drc_consensus.o: drc_consensus.c drc_consensus.h
+	$(CC) $(CFLAGS) -msse2 -c drc_consensus.c -o drc_consensus.o
+
+# P2P LLM Mesh
+p2p_llm_mesh.o: p2p_llm_mesh.c p2p_llm_mesh.h
+	$(CC) $(CFLAGS) -msse2 -c p2p_llm_mesh.c -o p2p_llm_mesh.o
+
+# DRC Self-Modification
+drc_selfmod.o: drc_selfmod.c drc_selfmod.h
+	$(CC) $(CFLAGS) -msse2 -c drc_selfmod.c -o drc_selfmod.o
+
+# CRBC (Cognitive Rollback & Checkpoint)
+crbc.o: crbc.c crbc.h
+	$(CC) $(CFLAGS) -msse2 -c crbc.c -o crbc.o
+
+# djiblas (Optimized matmul kernels)
+djiblas.o: djiblas.c djiblas.h
+	$(CC) $(CFLAGS) -mavx2 -mfma -c djiblas.c -o djiblas.o
 
 # DRC module compilation - Full cognitive architecture
 DRC_DIR = drc
@@ -130,8 +165,8 @@ $(LLAMA2_OBJ): llama2_efi.c
 	$(CC) $(CFLAGS) $(DRC_INCLUDES) -msse2 -c llama2_efi.c -o $(LLAMA2_OBJ)
 
 # Link llama2_efi with all modules
-llama2.so: $(LLAMA2_OBJ) network_boot.o wifi_ax200.o wifi_firmware.o wifi_wpa2.o $(DRC_OBJS)
-	ld $(LDFLAGS) $(LLAMA2_OBJ) network_boot.o wifi_ax200.o wifi_firmware.o wifi_wpa2.o $(DRC_OBJS) -o llama2.so $(LIBS)
+llama2.so: $(LLAMA2_OBJ) network_boot.o wifi_ax200.o wifi_firmware.o wifi_wpa2.o wifi_802_11.o drc_v5.o model_streaming.o drc_consensus.o p2p_llm_mesh.o drc_selfmod.o crbc.o djiblas.o $(DRC_OBJS)
+	ld $(LDFLAGS) $(LLAMA2_OBJ) network_boot.o wifi_ax200.o wifi_firmware.o wifi_wpa2.o wifi_802_11.o drc_v5.o model_streaming.o drc_consensus.o p2p_llm_mesh.o drc_selfmod.o crbc.o djiblas.o $(DRC_OBJS) -o llama2.so $(LIBS)
 
 # Convert llama2 to EFI
 $(LLAMA2): llama2.so
@@ -139,11 +174,47 @@ $(LLAMA2): llama2.so
 	        -j .dynsym -j .rel -j .rela -j .reloc \
 	        --target=efi-app-$(ARCH) llama2.so $(LLAMA2)
 
+# Compile test_llm_kernel (LLM-Kernel foundation tests)
+$(TEST_KERNEL_OBJ): test_llm_kernel.c memory_zones.h memory_sentinel.h
+	$(CC) $(CFLAGS) -msse2 -c test_llm_kernel.c -o $(TEST_KERNEL_OBJ)
+
+# Link test_llm_kernel
+test_llm_kernel.so: $(TEST_KERNEL_OBJ)
+	ld $(LDFLAGS) $(TEST_KERNEL_OBJ) -o test_llm_kernel.so $(LIBS)
+
+# Convert to EFI
+$(TEST_KERNEL): test_llm_kernel.so
+	objcopy -j .text -j .sdata -j .data -j .dynamic \
+	        -j .dynsym -j .rel -j .rela -j .reloc \
+	        --target=efi-app-$(ARCH) test_llm_kernel.so $(TEST_KERNEL)
+
+# Test LLM-Kernel foundations in QEMU
+test-kernel: $(TEST_KERNEL)
+	@echo "Creating test disk image..."
+	dd if=/dev/zero of=test-kernel.img bs=1M count=16
+	mkfs.fat -F32 test-kernel.img
+	mmd -i test-kernel.img ::/EFI
+	mmd -i test-kernel.img ::/EFI/BOOT
+	mcopy -i test-kernel.img $(TEST_KERNEL) ::/EFI/BOOT/BOOTX64.EFI
+	@echo "Testing LLM-Kernel in QEMU..."
+	qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd \
+	                   -drive format=raw,file=test-kernel.img \
+	                   -m 2048M \
+	                   -serial mon:stdio
+
+# Test target (compile and run unit tests)
+test: test_llm_baremetal
+	./test_llm_baremetal
+
+test_llm_baremetal: test_llm_baremetal.c djiblas.h
+	gcc -O3 -mavx2 -mfma -msse2 -o test_llm_baremetal test_llm_baremetal.c -lm
+
 # Clean build artifacts
 clean:
-	rm -f $(LLAMA2_OBJ) network_boot.o wifi_ax200.o wifi_firmware.o wifi_wpa2.o llama2.so $(LLAMA2)
+	rm -f $(LLAMA2_OBJ) network_boot.o wifi_ax200.o wifi_firmware.o wifi_wpa2.o wifi_802_11.o drc_v5.o model_streaming.o drc_consensus.o p2p_llm_mesh.o drc_selfmod.o crbc.o djiblas.o llama2.so $(LLAMA2)
 	rm -f drc_integration.o
 	rm -f $(DRC_DIR)/*.o
+	rm -f test_llm_baremetal test_llm_baremetal.exe
 
 # Create disk image with stories15M model ONLY
 disk: $(LLAMA2)
@@ -195,7 +266,32 @@ usb-image: $(LLAMA2)
 	@echo ""
 	@echo "Made in Dakar, Senegal!"
 
+# LLM-Kernel test targets
+test-kernel-quick: llama2.efi
+	@echo "🧪 Quick LLM-Kernel test (15s)..."
+	@bash quick-qemu-test.sh
+
+test-kernel-full: llama2.efi
+	@echo "🧪 Full LLM-Kernel test (60s)..."
+	@bash test-qemu-full.sh
+
+test-kernel-final: llama2.efi
+	@echo "🚀 Final LLM-Kernel test (120s)..."
+	@bash test-final-kernel.sh
+
+# Rebuild disk with latest EFI binary
+qemu-test.img: llama2.efi stories15M.bin tokenizer.bin
+	@echo "Creating QEMU test disk image..."
+	@rm -f qemu-test.img
+	@dd if=/dev/zero of=qemu-test.img bs=1M count=128 2>&1 | grep -v records
+	@mkfs.fat -F32 qemu-test.img 2>&1 | head -1
+	@mmd -i qemu-test.img ::/EFI
+	@mmd -i qemu-test.img ::/EFI/BOOT
+	@mcopy -i qemu-test.img llama2.efi ::/EFI/BOOT/BOOTX64.EFI
+	@mcopy -i qemu-test.img stories15M.bin tokenizer.bin ::/
+	@echo "✅ Disk image ready (128 MB)"
+
 # Default run target
 run: test-llama2
 
-.PHONY: all clean llama2-disk test-llama2 run usb-image
+.PHONY: all clean llama2-disk test-llama2 run usb-image test-kernel test-kernel-quick test-kernel-full test-kernel-final

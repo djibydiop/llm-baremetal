@@ -213,6 +213,7 @@ EFI_STATUS wifi_upload_firmware(
 
 /**
  * Turn WiFi radio ON
+ * Enables RF hardware with real AX200 registers
  */
 EFI_STATUS wifi_radio_on(
     WiFiDevice *device
@@ -224,11 +225,52 @@ EFI_STATUS wifi_radio_on(
         return EFI_NOT_READY;
     }
     
-    // TODO: Write to radio control registers
+    volatile UINT32 *csr = (volatile UINT32*)device->bar0_address;
+    
+    // Intel AX200 RF/PHY registers
+    #define CSR_GP_CNTRL             0x024
+    #define CSR_HW_IF_CONFIG         0x000
+    #define CSR_INT_MASK             0x00C
+    
+    #define GP_CNTRL_MAC_ACCESS_REQ  0x00000001
+    #define GP_CNTRL_MAC_CLOCK_READY 0x00000002
+    #define GP_CNTRL_RFKILL          0x08000000
+    
+    // Check RF kill switch
+    Print(L"[WIFI] → Checking RF kill switch...\r\n");
+    UINT32 gp_cntrl = csr[CSR_GP_CNTRL / 4];
+    if (gp_cntrl & GP_CNTRL_RFKILL) {
+        Print(L"[WIFI] ✗ RF kill switch active\r\n");
+        return EFI_ACCESS_DENIED;
+    }
+    
+    // Enable MAC clock
+    Print(L"[WIFI] → Enabling MAC clock...\r\n");
+    csr[CSR_GP_CNTRL / 4] |= GP_CNTRL_MAC_ACCESS_REQ;
+    
+    UINT32 timeout = 100;
+    while (timeout-- > 0) {
+        if (csr[CSR_GP_CNTRL / 4] & GP_CNTRL_MAC_CLOCK_READY) {
+            break;
+        }
+        uefi_call_wrapper(BS->Stall, 1, 1000);  // 1ms
+    }
+    
+    if (timeout == 0) {
+        Print(L"[WIFI] ✗ MAC clock timeout\r\n");
+        return EFI_TIMEOUT;
+    }
+    
+    // Configure hardware interface
+    csr[CSR_HW_IF_CONFIG / 4] = 0x00000001;
+    
+    // Enable interrupts
+    csr[CSR_INT_MASK / 4] = 0x800003FF;
+    
     device->radio_enabled = TRUE;
     device->state = WIFI_STATE_RADIO_ON;
     
-    Print(L"[WIFI] Radio is ON\r\n");
+    Print(L"[WIFI] ✓ Radio is ON\r\n");
     
     return EFI_SUCCESS;
 }
@@ -242,8 +284,9 @@ EFI_STATUS wifi_radio_off(
     Print(L"[WIFI] Turning radio OFF...\r\n");
     
     device->radio_enabled = FALSE;
+    device->state = WIFI_STATE_FIRMWARE_LOADED;
     
-    Print(L"[WIFI] Radio is OFF\r\n");
+    Print(L"[WIFI] ✓ Radio is OFF\r\n");
     
     return EFI_SUCCESS;
 }

@@ -1,84 +1,39 @@
-# Makefile for llm-baremetal EFI application
+# Makefile for llm-baremetal EFI - Essential Files Only
+# Created by Djiby Diop - Made in Senegal 🇸🇳
 
-# Architecture
 ARCH = x86_64
-
-# Compiler and flags (advanced optimizations)
 CC = gcc
-CFLAGS = -ffreestanding -fno-stack-protector -fpic \
-         -fshort-wchar -mno-red-zone -I/usr/include/efi \
-         -I/usr/include/efi/$(ARCH) -DEFI_FUNCTION_WRAPPER \
-         -O2 -msse2 \
-         -fno-asynchronous-unwind-tables
+CFLAGS = -ffreestanding -fno-stack-protector -fpic -fshort-wchar -mno-red-zone \
+         -I/usr/include/efi -I/usr/include/efi/$(ARCH) -DEFI_FUNCTION_WRAPPER \
+         -O2 -msse2 -fno-asynchronous-unwind-tables
 
 LDFLAGS = -nostdlib -znocombreloc -T /usr/lib/elf_$(ARCH)_efi.lds \
-          -shared -Bsymbolic -L/usr/lib \
-          /usr/lib/crt0-efi-$(ARCH).o
+          -shared -Bsymbolic -L/usr/lib /usr/lib/crt0-efi-$(ARCH).o
 
 LIBS = -lefi -lgnuefi
 
-# Output files
-TARGET = llm.efi
-CHATBOT = chatbot.efi
-HELLO = hello.efi
 LLAMA2 = llama2.efi
-TEST_KERNEL = test_llm_kernel.efi
-OBJ = llm_efi.o
-CHATBOT_OBJ = llm_chatbot.o
-HELLO_OBJ = hello_efi.o
-LLAMA2_OBJ = llama2_efi.o
-TEST_KERNEL_OBJ = test_llm_kernel.o
 
-# Default target
 all: $(LLAMA2)
 
-# Compile network_boot.c
-network_boot.o: network_boot.c
-	$(CC) $(CFLAGS) -msse2 -c network_boot.c -o network_boot.o
-
-# Compile wifi_ax200.c
-wifi_ax200.o: wifi_ax200.c wifi_ax200.h
-	$(CC) $(CFLAGS) -msse2 -c wifi_ax200.c -o wifi_ax200.o
-
-# Compile wifi_firmware.c
-wifi_firmware.o: wifi_firmware.c wifi_firmware.h wifi_ax200.h
-	$(CC) $(CFLAGS) -msse2 -c wifi_firmware.c -o wifi_firmware.o
-
-# Compile wifi_wpa2.c (WPA2 crypto)
-wifi_wpa2.o: wifi_wpa2.c wifi_wpa2.h
-	$(CC) $(CFLAGS) -msse2 -c wifi_wpa2.c -o wifi_wpa2.o
-
-# Compile wifi_802_11.c (802.11 protocol parsing)
-wifi_802_11.o: wifi_802_11.c wifi_802_11.h
-	$(CC) $(CFLAGS) -msse2 -c wifi_802_11.c -o wifi_802_11.o
-
-# DRC v5.0
-drc_v5.o: drc_v5.c drc_v5.h
-	$(CC) $(CFLAGS) -msse2 -c drc_v5.c -o drc_v5.o
-
-# Model Streaming 2.0
-model_streaming.o: model_streaming.c model_streaming.h
-	$(CC) $(CFLAGS) -msse2 -c model_streaming.c -o model_streaming.o
-
-# DRC Consensus
-drc_consensus.o: drc_consensus.c drc_consensus.h
-	$(CC) $(CFLAGS) -msse2 -c drc_consensus.c -o drc_consensus.o
-
-# P2P LLM Mesh
-p2p_llm_mesh.o: p2p_llm_mesh.c p2p_llm_mesh.h
-	$(CC) $(CFLAGS) -msse2 -c p2p_llm_mesh.c -o p2p_llm_mesh.o
-
-# DRC Self-Modification
-drc_selfmod.o: drc_selfmod.c drc_selfmod.h
-	$(CC) $(CFLAGS) -msse2 -c drc_selfmod.c -o drc_selfmod.o
-
-# CRBC (Cognitive Rollback & Checkpoint)
-crbc.o: crbc.c crbc.h
-	$(CC) $(CFLAGS) -msse2 -c crbc.c -o crbc.o
-
-# djiblas (Optimized matmul kernels)
 djiblas.o: djiblas.c djiblas.h
 	$(CC) $(CFLAGS) -mavx2 -mfma -c djiblas.c -o djiblas.o
+
+llama2_efi.o: llama2_efi.c heap_allocator.h matmul_optimized.h
+	$(CC) $(CFLAGS) -c llama2_efi.c -o llama2_efi.o
+
+llama2.so: llama2_efi.o djiblas.o
+	ld $(LDFLAGS) llama2_efi.o djiblas.o -o llama2.so $(LIBS)
+
+$(LLAMA2): llama2.so
+	objcopy -j .text -j .sdata -j .data -j .dynamic -j .dynsym \
+	        -j .rel -j .rela -j .reloc --target=efi-app-$(ARCH) llama2.so $(LLAMA2)
+
+clean:
+	rm -f llama2_efi.o djiblas.o llama2.so $(LLAMA2)
+
+.PHONY: all clean
+
 
 # DRC module compilation - Full cognitive architecture
 DRC_DIR = drc

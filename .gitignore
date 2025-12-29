@@ -24,6 +24,9 @@ OVMF.fd
 qemu*.txt
 DIAGNOSTIC.md
 
+# Local archived artifacts
+artifacts/
+
 # Temporary files
 SESSION_*.md
 GITHUB_UPLOAD.md

@@ -33,6 +33,31 @@ static int has_suffix_repeat(const int* tokens, int n_tokens, int span) {
     return 1;
 }
 
+static void apply_no_repeat_ngram(float* logits, int vocab_size, const int* tokens, int n_tokens, int ngram) {
+    if (ngram < 2) return;
+    if (n_tokens < ngram - 1) return;
+
+    int prefix_len = ngram - 1;
+    int prefix_start = n_tokens - prefix_len;
+    int limit = n_tokens - ngram;
+    for (int i = 0; i <= limit; i++) {
+        int match = 1;
+        for (int j = 0; j < prefix_len; j++) {
+            if (tokens[i + j] != tokens[prefix_start + j]) {
+                match = 0;
+                break;
+            }
+        }
+        if (match) {
+            int banned = tokens[i + prefix_len];
+            if (banned >= 0 && banned < vocab_size) {
+                // Large negative value to effectively zero it after softmax.
+                logits[banned] = -1.0e9f;
+            }
+        }
+    }
+}
+
 // ============================================================================
 // HEAP ALLOCATOR
 // ============================================================================
@@ -324,8 +349,8 @@ static float randf(void) {
     return (float)(g_seed >> 8) / 16777216.0f;
 }
 
-// Sample with temperature + top-p + repetition penalty
-int sample_advanced(float* logits, int n, float temperature, float top_p,
+// Sample with temperature + top-p + top-k + repetition penalty
+int sample_advanced(float* logits, int n, float temperature, float top_p, int top_k,
                     int* recent_tokens, int n_recent, float repeat_penalty) {
     // Apply repetition penalty
     if (repeat_penalty != 1.0f && n_recent > 0) {
@@ -373,20 +398,22 @@ int sample_advanced(float* logits, int n, float temperature, float top_p,
         logits[i] /= sum;
     }
     
-    // Top-p (nucleus) sampling
-    if (top_p < 1.0f) {
-        // IMPORTANT: vocab is 32k; do NOT full-sort with O(n^2) bubble sort.
-        // Approximate nucleus sampling by considering only TOP_K highest-prob tokens.
-        // This makes generation responsive in UEFI/QEMU.
-        #define TOP_K 128
-        static int top_idx[TOP_K];
-        static float top_prob[TOP_K];
-        int top_count = 0;
+    // Top-k / Top-p sampling
+    {
+        // IMPORTANT: vocab is 32k; do NOT full-sort.
+        // We maintain a small descending top-list.
+        #define MAX_TOP_K 256
+        static int top_idx[MAX_TOP_K];
+        static float top_prob[MAX_TOP_K];
+        int k = top_k;
+        if (k < 0) k = 0;
+        if (k > MAX_TOP_K) k = MAX_TOP_K;
+        if (k == 0 || k > n) k = (n < MAX_TOP_K) ? n : MAX_TOP_K;
 
-        // Keep a descending list of the TOP_K tokens.
+        int top_count = 0;
         for (int i = 0; i < n; i++) {
             float p = logits[i];
-            if (top_count < TOP_K) {
+            if (top_count < k) {
                 int j = top_count;
                 while (j > 0 && top_prob[j - 1] < p) {
                     top_prob[j] = top_prob[j - 1];
@@ -408,26 +435,28 @@ int sample_advanced(float* logits, int n, float temperature, float top_p,
             }
         }
 
-        float mass = 0.0f;
-        int cutoff = 0;
-        for (int i = 0; i < top_count; i++) {
-            mass += top_prob[i];
-            cutoff++;
-            if (mass >= top_p) break;
-        }
-        if (cutoff < 1) cutoff = 1;
-
-        // Sample from the nucleus subset.
-        float r = randf() * mass;
-        float cdf = 0.0f;
-        for (int i = 0; i < cutoff; i++) {
-            cdf += top_prob[i];
-            if (r < cdf) {
-                return top_idx[i];
+        // If both are effectively "disabled" (top_p>=1 and top_k<=0), fall through to full sampling.
+        if (top_k > 0 || top_p < 1.0f) {
+            float mass = 0.0f;
+            int cutoff = 0;
+            for (int i = 0; i < top_count; i++) {
+                mass += top_prob[i];
+                cutoff++;
+                if (top_p < 1.0f && mass >= top_p) break;
             }
+            if (cutoff < 1) cutoff = 1;
+
+            float r = randf() * mass;
+            float cdf = 0.0f;
+            for (int i = 0; i < cutoff; i++) {
+                cdf += top_prob[i];
+                if (r < cdf) {
+                    return top_idx[i];
+                }
+            }
+            return top_idx[cutoff - 1];
         }
-        return top_idx[cutoff - 1];
-        #undef TOP_K
+        #undef MAX_TOP_K
     }
     
     // Sample from distribution
@@ -898,7 +927,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     // Sampling parameters
     float temperature = 0.8f;
     float top_p = 0.9f;
+    int top_k = 128;
     float repeat_penalty = 1.1f;
+    int no_repeat_ngram = 4;
     
     int conversation_count = 0;
     
@@ -968,6 +999,30 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 Print(L"%d.", (int)top_p);
                 Print(L"%d\r\n", (int)((top_p - (int)top_p) * 100.0f));
                 continue;
+            } else if (my_strncmp(prompt, "/top_k ", 7) == 0) {
+                int val = 0;
+                int i = 7;
+                while (prompt[i] >= '0' && prompt[i] <= '9') {
+                    val = val * 10 + (prompt[i] - '0');
+                    i++;
+                }
+                if (val < 0) val = 0;
+                if (val > 256) val = 256;
+                top_k = val;
+                Print(L"  Top-k set to: %d\r\n", top_k);
+                continue;
+            } else if (my_strncmp(prompt, "/norepeat ", 10) == 0) {
+                int val = 0;
+                int i = 10;
+                while (prompt[i] >= '0' && prompt[i] <= '9') {
+                    val = val * 10 + (prompt[i] - '0');
+                    i++;
+                }
+                if (val < 0) val = 0;
+                if (val > 16) val = 16;
+                no_repeat_ngram = val;
+                Print(L"  No-repeat ngram set to: %d\r\n", no_repeat_ngram);
+                continue;
             } else if (my_strncmp(prompt, "/repeat ", 8) == 0) {
                 float val = 0.0f;
                 int i = 8;
@@ -993,6 +1048,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 Print(L"\r\nCommands:\r\n");
                 Print(L"  /temp <val>   - Set temperature (0.0=greedy, 1.0=creative)\r\n");
                 Print(L"  /top_p <val>  - Set nucleus sampling (0.0-1.0)\r\n");
+                Print(L"  /top_k <int>  - Set top-k (0=off, typical 40-200)\r\n");
+                Print(L"  /norepeat <n> - No-repeat ngram (0=off, typical 3-6)\r\n");
                 Print(L"  /repeat <val> - Set repetition penalty (1.0=none, 1.5=strong)\r\n");
                 Print(L"  /help         - Show this help\r\n\r\n");
                 Print(L"Current settings:\r\n");
@@ -1002,6 +1059,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 Print(L"  Top-p: ");
                 Print(L"%d.", (int)top_p);
                 Print(L"%d\r\n", (int)((top_p - (int)top_p) * 100.0f));
+                Print(L"  Top-k: %d\r\n", top_k);
+                Print(L"  No-repeat ngram: %d\r\n", no_repeat_ngram);
                 Print(L"  Repeat penalty: ");
                 Print(L"%d.", (int)repeat_penalty);
                 Print(L"%d\r\n\r\n", (int)((repeat_penalty - (int)repeat_penalty) * 100.0f));
@@ -1056,11 +1115,16 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             // We sample from the logits produced by the previous forward pass.
             // For step==0, logits come from the final prompt token (prefill).
 
-            // Sample next token (temperature/top_p + repetition penalty)
+            // Apply no-repeat ngram blocking (works on pre-softmax logits).
+            if (no_repeat_ngram > 1) {
+                apply_no_repeat_ngram(state.logits, config.vocab_size, context_tokens, n_context_tokens, no_repeat_ngram);
+            }
+
+            // Sample next token (temperature/top_p/top_k + repetition penalty)
             int n_recent = n_context_tokens;
             if (n_recent > 64) n_recent = 64;
             int* recent = (n_recent > 0) ? &context_tokens[n_context_tokens - n_recent] : (int*)0;
-            next = sample_advanced(state.logits, config.vocab_size, temperature, top_p, recent, n_recent, repeat_penalty);
+            next = sample_advanced(state.logits, config.vocab_size, temperature, top_p, top_k, recent, n_recent, repeat_penalty);
             
             // Check for EOS (some exports may still emit BOS; treat both as stop)
             if (next == TOKEN_EOS || next == TOKEN_BOS) break;

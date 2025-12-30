@@ -9,6 +9,6 @@ if (-not $wslRepo) { throw "Failed to convert path to WSL path via wslpath: $PSS
 $wslRepo = $wslRepo.Trim()
 $wslScript = "cd '$wslRepo' && chmod +x create-boot-mtools.sh && make clean && make && MODEL_BIN=stories110M.bin ./create-boot-mtools.sh"
 
-wsl bash -lc $wslScript
+wsl bash -lc "$wslScript"
 
 Write-Host "`n✅ Done: llm-baremetal-boot.img" -ForegroundColor Green

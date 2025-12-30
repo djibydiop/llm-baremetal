@@ -19,6 +19,20 @@
 #define SEQ_LEN 256
 #define MAX_TOKENS 100
 
+// Token ids used by this tiny tokenizer export.
+// NOTE: encode() currently inserts BOS=1.
+#define TOKEN_BOS 1
+#define TOKEN_EOS 2
+
+static int has_suffix_repeat(const int* tokens, int n_tokens, int span) {
+    if (span <= 0) return 0;
+    if (n_tokens < 2 * span) return 0;
+    for (int i = 0; i < span; i++) {
+        if (tokens[n_tokens - span + i] != tokens[n_tokens - 2 * span + i]) return 0;
+    }
+    return 1;
+}
+
 // ============================================================================
 // HEAP ALLOCATOR
 // ============================================================================
@@ -473,7 +487,7 @@ void encode(char* text, int* tokens, int* n_tokens, int max_tokens, Tokenizer* t
     if (max_tokens <= 0) return;
 
     // Add BOS
-    tokens[(*n_tokens)++] = 1;
+    tokens[(*n_tokens)++] = TOKEN_BOS;
     if (*n_tokens >= max_tokens) return;
 
     // Greedy longest-match encoding
@@ -588,9 +602,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     uefi_call_wrapper(BS->SetWatchdogTimer, 4, 0, 0, 0, NULL);
     
     Print(L"\r\n");
-    Print(L"════════════════════════════════════════\r\n");
+    Print(L"----------------------------------------\r\n");
     Print(L"  LLAMA2 CHAT REPL V3 - Full Loop\r\n");
-    Print(L"════════════════════════════════════════\r\n\r\n");
+    Print(L"----------------------------------------\r\n\r\n");
     
     // ========================================================================
     // [1/7] File System
@@ -601,31 +615,31 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     EFI_LOADED_IMAGE *LoadedImage;
     EFI_STATUS status = uefi_call_wrapper(BS->HandleProtocol, 3, ImageHandle, &LoadedImageProtocol, &LoadedImage);
     if (EFI_ERROR(status)) {
-        Print(L"❌ LoadedImage protocol failed\r\n");
+        Print(L"ERROR: LoadedImage protocol failed\r\n");
         return status;
     }
     
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *FileSystem;
     status = uefi_call_wrapper(BS->HandleProtocol, 3, LoadedImage->DeviceHandle, &FileSystemProtocol, &FileSystem);
     if (EFI_ERROR(status)) {
-        Print(L"❌ FileSystem protocol failed\r\n");
+        Print(L"ERROR: FileSystem protocol failed\r\n");
         return status;
     }
     
     EFI_FILE_HANDLE Root;
     status = uefi_call_wrapper(FileSystem->OpenVolume, 2, FileSystem, &Root);
     if (EFI_ERROR(status)) {
-        Print(L"❌ OpenVolume failed\r\n");
+        Print(L"ERROR: OpenVolume failed\r\n");
         return status;
     }
     
-    Print(L"✅ File system ready\r\n\r\n");
+    Print(L"OK: File system ready\r\n\r\n");
 
     // CPU feature detection (djiblas) - TEMPORARILY DISABLED (CPUID issue in UEFI)
     // Print(L"[1.5/7] Detecting CPU features...\r\n");
     // CPUFeatures cpu_features;
     // djiblas_detect_cpu(&cpu_features);
-    Print(L"🔧 [DJIBLAS] Using optimized SGEMM (SSE2 baseline)\r\n\r\n");
+    Print(L"[DJIBLAS] Using optimized SGEMM (SSE2 baseline)\r\n\r\n");
     
     // ========================================================================
     // [2/7] Load Model Header
@@ -640,7 +654,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         model_filename = L"stories15M.bin";
         status = uefi_call_wrapper(Root->Open, 5, Root, &ModelFile, model_filename, EFI_FILE_MODE_READ, 0);
         if (EFI_ERROR(status)) {
-            Print(L"❌ Model file not found (expected stories110M.bin or stories15M.bin)\r\n");
+            Print(L"ERROR: Model file not found (expected stories110M.bin or stories15M.bin)\r\n");
             return status;
         }
     }
@@ -673,8 +687,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         }
     }
     
-        Print(L"✅ Model loaded: %s (dim=%d, layers=%d, heads=%d, kv=%d, vocab=%d, seq=%d)\r\n\r\n",
-            model_filename, config.dim, config.n_layers, config.n_heads, config.n_kv_heads, config.vocab_size, config.seq_len);
+        Print(L"OK: Model loaded: %s (dim=%d, layers=%d, heads=%d, kv=%d, vocab=%d, seq=%d)\r\n\r\n",
+                    model_filename, config.dim, config.n_layers, config.n_heads, config.n_kv_heads, config.vocab_size, config.seq_len);
 
     // ========================================================================
     // [3/7] Heap (auto-sized)
@@ -738,11 +752,11 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     Print(L"[3/7] Allocating heap (%d MB)...\r\n", (int)(heap_size / (1024 * 1024)));
     status = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData, heap_size, &heap_base);
     if (EFI_ERROR(status)) {
-        Print(L"❌ Heap allocation failed (need more RAM). Try QEMU -m 2048M for 110M.\r\n");
+        Print(L"ERROR: Heap allocation failed (need more RAM). Try QEMU -m 2048M for 110M.\r\n");
         return status;
     }
     heap_offset = 0;
-    Print(L"✅ Heap ready\r\n\r\n");
+    Print(L"OK: Heap ready\r\n\r\n");
     
     // ========================================================================
     // [4/7] Weight Pointers
@@ -752,12 +766,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     bytes_to_read = weights_bytes;
     float* weights_mem = (float*)simple_alloc(bytes_to_read);
     if (weights_mem == NULL) {
-        Print(L"❌ Out of heap while allocating weights (%d MB needed)\r\n", (int)(bytes_to_read / (1024 * 1024)));
+        Print(L"ERROR: Out of heap while allocating weights (%d MB needed)\r\n", (int)(bytes_to_read / (1024 * 1024)));
         return EFI_OUT_OF_RESOURCES;
     }
     status = read_exact(ModelFile, weights_mem, bytes_to_read);
     if (EFI_ERROR(status)) {
-        Print(L"❌ Failed to read weights (need model file + enough RAM).\r\n");
+        Print(L"ERROR: Failed to read weights (need model file + enough RAM).\r\n");
         return EFI_LOAD_ERROR;
     }
 
@@ -805,7 +819,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     
     uefi_call_wrapper(ModelFile->Close, 1, ModelFile);
     
-    Print(L"✅ Weights mapped\r\n\r\n");
+    Print(L"OK: Weights mapped\r\n\r\n");
     
     // ========================================================================
     // [5/7] State Buffers
@@ -828,7 +842,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     state.key_cache = (float*)simple_alloc(config.n_layers * config.seq_len * kv_dim * sizeof(float));
     state.value_cache = (float*)simple_alloc(config.n_layers * config.seq_len * kv_dim * sizeof(float));
     
-    Print(L"✅ State buffers allocated\r\n\r\n");
+    Print(L"OK: State buffers allocated\r\n\r\n");
     
     // ========================================================================
     // [6/7] Tokenizer
@@ -839,7 +853,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     EFI_FILE_HANDLE TokFile;
     status = uefi_call_wrapper(Root->Open, 5, Root, &TokFile, L"tokenizer.bin", EFI_FILE_MODE_READ, 0);
     if (EFI_ERROR(status)) {
-        Print(L"❌ Tokenizer file not found\r\n");
+        Print(L"ERROR: Tokenizer file not found\r\n");
         return status;
     }
     
@@ -867,7 +881,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     
     uefi_call_wrapper(TokFile->Close, 1, TokFile);
     
-    Print(L"✅ Tokenizer loaded (%d tokens)\r\n\r\n", tokenizer.vocab_size);
+    Print(L"OK: Tokenizer loaded (%d tokens)\r\n\r\n", tokenizer.vocab_size);
     
     // ========================================================================
     // [7/7] Interactive REPL Loop
@@ -875,11 +889,11 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     
     Print(L"[7/7] Entering chat loop...\r\n\r\n");
     
-    Print(L"════════════════════════════════════════\r\n");
+    Print(L"----------------------------------------\r\n");
     Print(L"  CHAT MODE ACTIVE\r\n");
     Print(L"  Type 'quit' or 'exit' to stop\r\n");
     Print(L"  Commands: /temp /top_p /repeat /help\r\n");
-    Print(L"════════════════════════════════════════\r\n\r\n");
+    Print(L"----------------------------------------\r\n\r\n");
     
     // Sampling parameters
     float temperature = 0.8f;
@@ -904,9 +918,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         // Check for quit
         if (check_quit_command(prompt)) {
             Print(L"\r\n");
-            Print(L"════════════════════════════════════════\r\n");
+            Print(L"----------------------------------------\r\n");
             Print(L"  Goodbye! Had %d conversations.\r\n", conversation_count - 1);
-            Print(L"════════════════════════════════════════\r\n\r\n");
+            Print(L"----------------------------------------\r\n\r\n");
             break;
         }
         
@@ -1021,29 +1035,6 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             transformer_forward(&state, &weights, &config, prompt_tokens[i], i);
         }
         
-        // Echo prompt
-        for (int i = 1; i < n_prompt_tokens; i++) {
-            if (tokenizer.vocab[prompt_tokens[i]]) {
-                char* piece = tokenizer.vocab[prompt_tokens[i]];
-                
-                // Skip special tokens in echo
-                if (piece[0] == '<' && my_strlen(piece) > 2) {
-                    int len = my_strlen(piece);
-                    if (piece[len-1] == '>') continue;
-                }
-                
-                CHAR16 wpiece[256];
-                int piece_len = my_strlen(piece);
-                int copy_len = piece_len;
-                if (copy_len > 255) copy_len = 255;
-                for (int j = 0; j < copy_len; j++) {
-                    wpiece[j] = (CHAR16)piece[j];
-                }
-                wpiece[copy_len] = 0;
-                Print(L"%s", wpiece);
-            }
-        }
-        
         // Start generation from the last prompt token.
         // After prefill, state.logits already corresponds to the last prompt token at position (n_prompt_tokens-1).
         int next;
@@ -1054,15 +1045,25 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         int repeat_count = 0;
         int last_token = -1;
         
+        // Track context for repetition penalty and loop detection.
+        int context_tokens[256 + MAX_TOKENS];
+        int n_context_tokens = 0;
+        for (int i = 0; i < n_prompt_tokens && n_context_tokens < (int)(sizeof(context_tokens) / sizeof(context_tokens[0])); i++) {
+            context_tokens[n_context_tokens++] = prompt_tokens[i];
+        }
+
         for (int step = 0; step < MAX_TOKENS; step++) {
             // We sample from the logits produced by the previous forward pass.
             // For step==0, logits come from the final prompt token (prefill).
 
-            // Sample next token (greedy argmax)
-            next = sample(state.logits, config.vocab_size);
+            // Sample next token (temperature/top_p + repetition penalty)
+            int n_recent = n_context_tokens;
+            if (n_recent > 64) n_recent = 64;
+            int* recent = (n_recent > 0) ? &context_tokens[n_context_tokens - n_recent] : (int*)0;
+            next = sample_advanced(state.logits, config.vocab_size, temperature, top_p, recent, n_recent, repeat_penalty);
             
-            // Check for EOS
-            if (next == 1) break;
+            // Check for EOS (some exports may still emit BOS; treat both as stop)
+            if (next == TOKEN_EOS || next == TOKEN_BOS) break;
             
             // Check if stuck on same token (per conversation)
             if (next == last_token) {
@@ -1088,6 +1089,18 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                     Print(L"%s", wpiece);
                     generated_count++;
                 }
+            }
+
+            // Append to context and apply a simple loop-stop heuristic.
+            if (n_context_tokens < (int)(sizeof(context_tokens) / sizeof(context_tokens[0]))) {
+                context_tokens[n_context_tokens++] = next;
+            }
+            // Stop if the tail repeats (common failure mode: short loops).
+            // spans chosen to be cheap and effective in practice.
+            if (has_suffix_repeat(context_tokens, n_context_tokens, 8) ||
+                has_suffix_repeat(context_tokens, n_context_tokens, 12) ||
+                has_suffix_repeat(context_tokens, n_context_tokens, 16)) {
+                break;
             }
             
             // Advance position and compute next logits

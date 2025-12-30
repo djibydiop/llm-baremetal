@@ -18,6 +18,7 @@ LIBS = -lefi -lgnuefi
 TARGET = llama2.efi
 REPL_SRC = llama2_efi_final.c
 REPL_OBJ = llama2_repl.o
+REPL_OBJS = $(REPL_OBJ) djiblas.o
 REPL_SO  = llama2_repl.so
 
 # Legacy/optimized build (kept for djiblas experiments)
@@ -31,11 +32,11 @@ repl: $(TARGET)
 	@echo "✅ Build complete: $(TARGET)"
 	@ls -lh $(TARGET)
 
-$(REPL_OBJ): $(REPL_SRC)
+$(REPL_OBJ): $(REPL_SRC) djiblas.h
 	$(CC) $(CFLAGS) -c $(REPL_SRC) -o $(REPL_OBJ)
 
-$(REPL_SO): $(REPL_OBJ)
-	ld $(LDFLAGS) $(REPL_OBJ) -o $(REPL_SO) $(LIBS)
+$(REPL_SO): $(REPL_OBJS)
+	ld $(LDFLAGS) $(REPL_OBJS) -o $(REPL_SO) $(LIBS)
 
 $(TARGET): $(REPL_SO)
 	objcopy -j .text -j .sdata -j .data -j .dynamic -j .dynsym \

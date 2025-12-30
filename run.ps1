@@ -15,7 +15,10 @@ Write-Host "  Image: $IMAGE" -ForegroundColor Gray
 $args = @(
   "-drive", "if=pflash,format=raw,readonly=on,file=$OVMF",
   "-drive", "format=raw,file=$IMAGE",
-  "-m", "512M",
+  # Headless: keep everything in this terminal (avoids GTK warnings).
+  "-display", "none",
+  # 110M model needs more RAM; 15M will still work fine with this too.
+  "-m", "2048M",
   "-cpu", "qemu64",
   "-serial", "stdio",
   "-monitor", "none"

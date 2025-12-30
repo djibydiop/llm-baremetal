@@ -10,22 +10,43 @@ echo "🚀 Creating Bootable USB Image (mtools method)"
 echo "════════════════════════════════════════════════"
 echo ""
 
+# Model selection (default: stories15M.bin)
+# Usage:
+#   MODEL_BIN=stories110M.bin ./create-boot-mtools.sh
+MODEL_BIN="${MODEL_BIN:-stories15M.bin}"
+
 # Check required files
 echo "[1/4] Checking required files..."
-for file in llama2.efi stories15M.bin tokenizer.bin; do
+for file in llama2.efi tokenizer.bin; do
     if [ ! -f "$file" ]; then
         echo "❌ Missing: $file"
         exit 1
     fi
 done
+
+MODEL_SRC="$MODEL_BIN"
+if [ ! -f "$MODEL_SRC" ] && [ -f "../$MODEL_BIN" ]; then
+    MODEL_SRC="../$MODEL_BIN"
+fi
+if [ ! -f "$MODEL_SRC" ]; then
+    echo "❌ Missing model: $MODEL_BIN (looked in current dir and parent dir)"
+    exit 1
+fi
 echo "✅ All files present"
 
-# Create image file (100MB)
+# Create image file (auto-sized)
 echo ""
-echo "[2/4] Creating 100MB FAT32 image..."
+MODEL_BYTES=$(stat -c %s "$MODEL_SRC")
+MODEL_MIB=$(( (MODEL_BYTES + 1024*1024 - 1) / (1024*1024) ))
+# Slack for FAT + GPT + EFI + tokenizer + alignment
+SLACK_MIB=80
+IMAGE_MIB=$(( MODEL_MIB + SLACK_MIB ))
+if [ $IMAGE_MIB -lt 100 ]; then IMAGE_MIB=100; fi
+
+echo "[2/4] Creating ${IMAGE_MIB}MB FAT32 image..."
 IMAGE="llm-baremetal-boot.img"
 rm -f "$IMAGE"
-dd if=/dev/zero of="$IMAGE" bs=1M count=100 status=progress
+dd if=/dev/zero of="$IMAGE" bs=1M count=$IMAGE_MIB status=progress
 echo "✅ Image created"
 
 # Format as FAT32 with partition table
@@ -64,8 +85,8 @@ echo "  ✅ Copied BOOTX64.EFI"
 mcopy llama2.efi z:/LLAMA2.EFI
 echo "  ✅ Copied LLAMA2.EFI"
 
-mcopy stories15M.bin z:/
-echo "  ✅ Copied stories15M.bin (58 MB)"
+mcopy "$MODEL_SRC" z:/"$(basename "$MODEL_BIN")"
+echo "  ✅ Copied $(basename "$MODEL_BIN") (${MODEL_MIB} MB)"
 
 mcopy tokenizer.bin z:/
 echo "  ✅ Copied tokenizer.bin"

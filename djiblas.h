@@ -12,6 +12,12 @@
 #include <efi.h>
 #include <efilib.h>
 
+// Some UEFI/QEMU setups may fault on CPUID (#UD).
+// Define DJIBLAS_DISABLE_CPUID=1 to skip runtime detection and use a safe baseline.
+#ifndef DJIBLAS_DISABLE_CPUID
+#define DJIBLAS_DISABLE_CPUID 0
+#endif
+
 // CPU feature detection
 typedef struct {
     BOOLEAN has_sse2;

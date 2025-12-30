@@ -29,6 +29,13 @@ void djiblas_detect_cpu(CPUFeatures *features) {
     features->has_fma = FALSE;
     features->has_avx512f = FALSE;
     features->has_avx512_vnni = FALSE;
+
+#if DJIBLAS_DISABLE_CPUID
+    // Safe baseline: we compile the project with at least SSE2 enabled.
+    // Avoid executing CPUID, which may #UD in some UEFI/QEMU configurations.
+    features->has_sse2 = TRUE;
+    return;
+#endif
     
 #if defined(__x86_64__) || defined(_M_X64)
     // Check for CPUID support

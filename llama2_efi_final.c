@@ -5,6 +5,10 @@
 #include <efilib.h>
 #include <stdint.h>
 
+// djiblas optimized matmul
+#define DJIBLAS_DISABLE_CPUID 1
+#include "djiblas.h"
+
 // Model config
 #define DIM 288
 #define HIDDEN_DIM 768
@@ -28,6 +32,37 @@ void* simple_alloc(unsigned long bytes) {
     void* ptr = heap_base + heap_offset;
     heap_offset += bytes;
     return ptr;
+}
+
+static EFI_STATUS read_exact(EFI_FILE_HANDLE file, void *dst, UINTN total_bytes) {
+    UINT8 *p = (UINT8 *)dst;
+    UINTN remaining = total_bytes;
+    UINTN done = 0;
+    UINTN next_report = 0;
+    while (remaining > 0) {
+        UINTN chunk = remaining;
+        // Large reads can fail on some UEFI implementations; keep chunks modest.
+        if (chunk > (16U * 1024U * 1024U)) chunk = (16U * 1024U * 1024U);
+        UINTN got = chunk;
+        EFI_STATUS st = uefi_call_wrapper(file->Read, 3, file, &got, p);
+        if (EFI_ERROR(st)) return st;
+        if (got == 0) return EFI_LOAD_ERROR;
+        p += got;
+        done += got;
+        if (got > remaining) return EFI_LOAD_ERROR;
+        remaining -= got;
+
+        // Progress (avoid spamming): report every 64MB for large reads.
+        if (total_bytes >= (128U * 1024U * 1024U)) {
+            if (done >= next_report) {
+                UINTN mb_done = done / (1024U * 1024U);
+                UINTN mb_total = total_bytes / (1024U * 1024U);
+                Print(L"  Reading weights... %d / %d MB\r\n", (int)mb_done, (int)mb_total);
+                next_report = done + (64U * 1024U * 1024U);
+            }
+        }
+    }
+    return EFI_SUCCESS;
 }
 
 // ============================================================================
@@ -54,6 +89,14 @@ float fast_exp(float x) {
     return x;
 }
 
+int my_strncmp(const char* s1, const char* s2, int n) {
+    for (int i = 0; i < n; i++) {
+        if (s1[i] != s2[i]) return s1[i] - s2[i];
+        if (s1[i] == 0) return 0;
+    }
+    return 0;
+}
+
 // ============================================================================
 // TRANSFORMER OPERATIONS
 // ============================================================================
@@ -72,13 +115,18 @@ void rmsnorm(float* o, float* x, float* weight, int size) {
 }
 
 void matmul(float* xout, float* x, float* w, int n, int d) {
-    for (int i = 0; i < d; i++) {
-        float val = 0.0f;
-        for (int j = 0; j < n; j++) {
-            val += w[i * n + j] * x[j];
-        }
-        xout[i] = val;
-    }
+    // DjibLAS computes (column-major): C(m×n) = A(k×m)^T · B(k×n)
+    // We want (row-major weights): xout(d) = W(d×n) · x(n)
+    // Trick: W(d×n) row-major has the same memory layout as B(k×n_out)
+    // column-major when k=n and n_out=d (because W[i*n + l] == B[l + k*i]).
+    // Use A = x as a (k×1) column-major matrix.
+    // Result C is (1×d) column-major, so it lands contiguous into xout.
+    djiblas_sgemm_f32(
+        /*m=*/1, /*n=*/d, /*k=*/n,
+        /*A=*/x, /*lda=*/n,
+        /*B=*/w, /*ldb=*/n,
+        /*C=*/xout, /*ldc=*/1
+    );
 }
 
 void softmax(float* x, int size) {
@@ -254,7 +302,135 @@ void transformer_forward(RunState* s, TransformerWeights* w, Config* p, int toke
     matmul(s->logits, s->x, w->wcls, dim, p->vocab_size);
 }
 
+// Simple PRNG for sampling
+static unsigned int g_seed = 1234567;
+
+static float randf(void) {
+    g_seed = g_seed * 1664525 + 1013904223;
+    return (float)(g_seed >> 8) / 16777216.0f;
+}
+
+// Sample with temperature + top-p + repetition penalty
+int sample_advanced(float* logits, int n, float temperature, float top_p,
+                    int* recent_tokens, int n_recent, float repeat_penalty) {
+    // Apply repetition penalty
+    if (repeat_penalty != 1.0f && n_recent > 0) {
+        for (int i = 0; i < n_recent; i++) {
+            int tok = recent_tokens[i];
+            if (tok >= 0 && tok < n) {
+                if (logits[tok] > 0) {
+                    logits[tok] /= repeat_penalty;
+                } else {
+                    logits[tok] *= repeat_penalty;
+                }
+            }
+        }
+    }
+    
+    // Greedy if temp=0
+    if (temperature <= 0.0f) {
+        int max_i = 0;
+        float max_val = logits[0];
+        for (int i = 1; i < n; i++) {
+            if (logits[i] > max_val) {
+                max_val = logits[i];
+                max_i = i;
+            }
+        }
+        return max_i;
+    }
+    
+    // Apply temperature
+    for (int i = 0; i < n; i++) {
+        logits[i] /= temperature;
+    }
+    
+    // Softmax
+    float max_val = logits[0];
+    for (int i = 1; i < n; i++) {
+        if (logits[i] > max_val) max_val = logits[i];
+    }
+    float sum = 0.0f;
+    for (int i = 0; i < n; i++) {
+        logits[i] = fast_exp(logits[i] - max_val);
+        sum += logits[i];
+    }
+    for (int i = 0; i < n; i++) {
+        logits[i] /= sum;
+    }
+    
+    // Top-p (nucleus) sampling
+    if (top_p < 1.0f) {
+        // IMPORTANT: vocab is 32k; do NOT full-sort with O(n^2) bubble sort.
+        // Approximate nucleus sampling by considering only TOP_K highest-prob tokens.
+        // This makes generation responsive in UEFI/QEMU.
+        #define TOP_K 128
+        static int top_idx[TOP_K];
+        static float top_prob[TOP_K];
+        int top_count = 0;
+
+        // Keep a descending list of the TOP_K tokens.
+        for (int i = 0; i < n; i++) {
+            float p = logits[i];
+            if (top_count < TOP_K) {
+                int j = top_count;
+                while (j > 0 && top_prob[j - 1] < p) {
+                    top_prob[j] = top_prob[j - 1];
+                    top_idx[j] = top_idx[j - 1];
+                    j--;
+                }
+                top_prob[j] = p;
+                top_idx[j] = i;
+                top_count++;
+            } else if (p > top_prob[top_count - 1]) {
+                int j = top_count - 1;
+                while (j > 0 && top_prob[j - 1] < p) {
+                    top_prob[j] = top_prob[j - 1];
+                    top_idx[j] = top_idx[j - 1];
+                    j--;
+                }
+                top_prob[j] = p;
+                top_idx[j] = i;
+            }
+        }
+
+        float mass = 0.0f;
+        int cutoff = 0;
+        for (int i = 0; i < top_count; i++) {
+            mass += top_prob[i];
+            cutoff++;
+            if (mass >= top_p) break;
+        }
+        if (cutoff < 1) cutoff = 1;
+
+        // Sample from the nucleus subset.
+        float r = randf() * mass;
+        float cdf = 0.0f;
+        for (int i = 0; i < cutoff; i++) {
+            cdf += top_prob[i];
+            if (r < cdf) {
+                return top_idx[i];
+            }
+        }
+        return top_idx[cutoff - 1];
+        #undef TOP_K
+    }
+    
+    // Sample from distribution
+    float r = randf();
+    float cumsum = 0.0f;
+    for (int i = 0; i < n; i++) {
+        cumsum += logits[i];
+        if (r < cumsum) {
+            return i;
+        }
+    }
+    
+    return n - 1;
+}
+
 int sample(float* logits, int n) {
+    // Simple greedy for now (kept for compatibility)
     int max_i = 0;
     float max_val = logits[0];
     for (int i = 1; i < n; i++) {
@@ -406,6 +582,10 @@ void reset_kv_cache(RunState* s, Config* p) {
 
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     InitializeLib(ImageHandle, SystemTable);
+
+    // Disable the UEFI watchdog timer (large model loads can take minutes).
+    // If not disabled, firmware may reset/reboot mid-load and it looks like a hang.
+    uefi_call_wrapper(BS->SetWatchdogTimer, 4, 0, 0, 0, NULL);
     
     Print(L"\r\n");
     Print(L"════════════════════════════════════════\r\n");
@@ -413,28 +593,13 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     Print(L"════════════════════════════════════════\r\n\r\n");
     
     // ========================================================================
-    // [1/7] Heap
+    // [1/7] File System
     // ========================================================================
     
-    Print(L"[1/7] Allocating heap (100MB)...\r\n");
-    
-    heap_size = 100 * 1024 * 1024;
-    EFI_STATUS status = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData, heap_size, &heap_base);
-    if (EFI_ERROR(status)) {
-        Print(L"❌ Heap allocation failed\r\n");
-        return status;
-    }
-    
-    Print(L"✅ Heap ready\r\n\r\n");
-    
-    // ========================================================================
-    // [2/7] File System
-    // ========================================================================
-    
-    Print(L"[2/7] Opening file system...\r\n");
+    Print(L"[1/7] Opening file system...\r\n");
     
     EFI_LOADED_IMAGE *LoadedImage;
-    status = uefi_call_wrapper(BS->HandleProtocol, 3, ImageHandle, &LoadedImageProtocol, &LoadedImage);
+    EFI_STATUS status = uefi_call_wrapper(BS->HandleProtocol, 3, ImageHandle, &LoadedImageProtocol, &LoadedImage);
     if (EFI_ERROR(status)) {
         Print(L"❌ LoadedImage protocol failed\r\n");
         return status;
@@ -455,18 +620,29 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     }
     
     Print(L"✅ File system ready\r\n\r\n");
+
+    // CPU feature detection (djiblas) - TEMPORARILY DISABLED (CPUID issue in UEFI)
+    // Print(L"[1.5/7] Detecting CPU features...\r\n");
+    // CPUFeatures cpu_features;
+    // djiblas_detect_cpu(&cpu_features);
+    Print(L"🔧 [DJIBLAS] Using optimized SGEMM (SSE2 baseline)\r\n\r\n");
     
     // ========================================================================
-    // [3/7] Load Model
+    // [2/7] Load Model Header
     // ========================================================================
     
-    Print(L"[3/7] Loading model (stories15M.bin)...\r\n");
+    Print(L"[2/7] Loading model...\r\n");
     
     EFI_FILE_HANDLE ModelFile;
-    status = uefi_call_wrapper(Root->Open, 5, Root, &ModelFile, L"stories15M.bin", EFI_FILE_MODE_READ, 0);
+    CHAR16 *model_filename = L"stories110M.bin";
+    status = uefi_call_wrapper(Root->Open, 5, Root, &ModelFile, model_filename, EFI_FILE_MODE_READ, 0);
     if (EFI_ERROR(status)) {
-        Print(L"❌ Model file not found\r\n");
-        return status;
+        model_filename = L"stories15M.bin";
+        status = uefi_call_wrapper(Root->Open, 5, Root, &ModelFile, model_filename, EFI_FILE_MODE_READ, 0);
+        if (EFI_ERROR(status)) {
+            Print(L"❌ Model file not found (expected stories110M.bin or stories15M.bin)\r\n");
+            return status;
+        }
     }
     
     Config config;
@@ -476,45 +652,112 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     // In llama2.c format, a negative vocab_size indicates shared classifier weights.
     int shared_classifier = (config.vocab_size < 0);
     if (config.vocab_size < 0) config.vocab_size = -config.vocab_size;
+
+    // Some exported model files may *still* share classifier weights even if vocab_size is positive.
+    // Detect this by comparing expected weights size vs actual file size.
+    UINT64 model_file_size = 0;
+    {
+        EFI_GUID FileInfoGuid = EFI_FILE_INFO_ID;
+        UINTN info_size = 0;
+        EFI_STATUS st = uefi_call_wrapper(ModelFile->GetInfo, 4, ModelFile, &FileInfoGuid, &info_size, NULL);
+        if (st == EFI_BUFFER_TOO_SMALL && info_size > 0) {
+            EFI_FILE_INFO *info = NULL;
+            st = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData, info_size, (void **)&info);
+            if (!EFI_ERROR(st) && info) {
+                st = uefi_call_wrapper(ModelFile->GetInfo, 4, ModelFile, &FileInfoGuid, &info_size, info);
+                if (!EFI_ERROR(st)) {
+                    model_file_size = info->FileSize;
+                }
+                uefi_call_wrapper(BS->FreePool, 1, info);
+            }
+        }
+    }
     
-    Print(L"✅ Model: %dM params, %d layers, %d vocab\r\n\r\n", 
-          config.dim, config.n_layers, config.vocab_size);
+        Print(L"✅ Model loaded: %s (dim=%d, layers=%d, heads=%d, kv=%d, vocab=%d, seq=%d)\r\n\r\n",
+            model_filename, config.dim, config.n_layers, config.n_heads, config.n_kv_heads, config.vocab_size, config.seq_len);
+
+    // ========================================================================
+    // [3/7] Heap (auto-sized)
+    // ========================================================================
+
+    int kv_dim = (config.dim * config.n_kv_heads) / config.n_heads;
+    int head_size = config.dim / config.n_heads;
+
+    // Compute total weights size (floats)
+    UINTN n_floats_base = 0;
+    n_floats_base += (UINTN)config.vocab_size * (UINTN)config.dim;                   // token_embedding_table
+    n_floats_base += (UINTN)config.n_layers * (UINTN)config.dim;                     // rms_att_weight
+    n_floats_base += (UINTN)config.n_layers * (UINTN)config.dim * (UINTN)config.dim; // wq
+    n_floats_base += (UINTN)config.n_layers * (UINTN)config.dim * (UINTN)kv_dim;     // wk
+    n_floats_base += (UINTN)config.n_layers * (UINTN)config.dim * (UINTN)kv_dim;     // wv
+    n_floats_base += (UINTN)config.n_layers * (UINTN)config.dim * (UINTN)config.dim; // wo
+    n_floats_base += (UINTN)config.n_layers * (UINTN)config.dim;                     // rms_ffn_weight
+    n_floats_base += (UINTN)config.n_layers * (UINTN)config.dim * (UINTN)config.hidden_dim; // w1
+    n_floats_base += (UINTN)config.n_layers * (UINTN)config.hidden_dim * (UINTN)config.dim; // w2
+    n_floats_base += (UINTN)config.n_layers * (UINTN)config.dim * (UINTN)config.hidden_dim; // w3
+    n_floats_base += (UINTN)config.dim;                                              // rms_final_weight
+    n_floats_base += (UINTN)config.seq_len * (UINTN)head_size / 2;                   // freq_cis_real
+    n_floats_base += (UINTN)config.seq_len * (UINTN)head_size / 2;                   // freq_cis_imag
+
+    UINTN n_floats_with_cls = n_floats_base + (UINTN)config.vocab_size * (UINTN)config.dim;
+
+    // If file size is known, use it to infer whether wcls is present.
+    if (model_file_size > 0) {
+        UINT64 available = model_file_size;
+        UINT64 header_bytes = (UINT64)(7 * sizeof(int));
+        if (available > header_bytes) available -= header_bytes;
+        UINT64 bytes_base = (UINT64)n_floats_base * sizeof(float);
+        UINT64 bytes_with = (UINT64)n_floats_with_cls * sizeof(float);
+
+        if (available < bytes_with && available >= bytes_base) {
+            shared_classifier = 1;
+        } else if (available >= bytes_with) {
+            shared_classifier = 0;
+        }
+    }
+
+    UINTN n_floats = shared_classifier ? n_floats_base : n_floats_with_cls;
+    UINTN weights_bytes = n_floats * sizeof(float);
+    UINTN state_bytes = 0;
+    state_bytes += (UINTN)config.dim * sizeof(float) * 3; // x, xb, xb2
+    state_bytes += (UINTN)config.hidden_dim * sizeof(float) * 2; // hb, hb2
+    state_bytes += (UINTN)config.dim * sizeof(float); // q
+    state_bytes += (UINTN)kv_dim * sizeof(float) * 2; // k, v
+    state_bytes += (UINTN)config.n_heads * (UINTN)config.seq_len * sizeof(float); // att
+    state_bytes += (UINTN)config.vocab_size * sizeof(float); // logits
+    state_bytes += (UINTN)config.n_layers * (UINTN)config.seq_len * (UINTN)kv_dim * sizeof(float) * 2; // key/value cache
+
+    // Tokenizer: pointers + scores + strings (strings size varies; reserve a safe budget)
+    UINTN tokenizer_bytes = (UINTN)config.vocab_size * (sizeof(char*) + sizeof(float));
+    tokenizer_bytes += 4 * 1024 * 1024; // string storage budget
+
+    UINTN slack_bytes = 16 * 1024 * 1024;
+    heap_size = weights_bytes + state_bytes + tokenizer_bytes + slack_bytes;
+    if (heap_size < 100ULL * 1024ULL * 1024ULL) heap_size = 100ULL * 1024ULL * 1024ULL;
+
+    Print(L"[3/7] Allocating heap (%d MB)...\r\n", (int)(heap_size / (1024 * 1024)));
+    status = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData, heap_size, &heap_base);
+    if (EFI_ERROR(status)) {
+        Print(L"❌ Heap allocation failed (need more RAM). Try QEMU -m 2048M for 110M.\r\n");
+        return status;
+    }
+    heap_offset = 0;
+    Print(L"✅ Heap ready\r\n\r\n");
     
     // ========================================================================
     // [4/7] Weight Pointers
     // ========================================================================
     
     Print(L"[4/7] Mapping weights...\r\n");
-    if (config.vocab_size < 0) config.vocab_size = -config.vocab_size;
-
-    int kv_dim = (config.dim * config.n_kv_heads) / config.n_heads;
-    int head_size = config.dim / config.n_heads;
-
-    // Compute total weights size (floats)
-    UINTN n_floats = 0;
-    n_floats += (UINTN)config.vocab_size * (UINTN)config.dim;                  // token_embedding_table
-    n_floats += (UINTN)config.n_layers * (UINTN)config.dim;                    // rms_att_weight
-    n_floats += (UINTN)config.n_layers * (UINTN)config.dim * (UINTN)config.dim; // wq
-    n_floats += (UINTN)config.n_layers * (UINTN)config.dim * (UINTN)kv_dim;     // wk
-    n_floats += (UINTN)config.n_layers * (UINTN)config.dim * (UINTN)kv_dim;     // wv
-    n_floats += (UINTN)config.n_layers * (UINTN)config.dim * (UINTN)config.dim; // wo
-    n_floats += (UINTN)config.n_layers * (UINTN)config.dim;                    // rms_ffn_weight
-    n_floats += (UINTN)config.n_layers * (UINTN)config.dim * (UINTN)config.hidden_dim; // w1
-    n_floats += (UINTN)config.n_layers * (UINTN)config.hidden_dim * (UINTN)config.dim; // w2
-    n_floats += (UINTN)config.n_layers * (UINTN)config.dim * (UINTN)config.hidden_dim; // w3
-    n_floats += (UINTN)config.dim;                                             // rms_final_weight
-    n_floats += (UINTN)config.seq_len * (UINTN)head_size / 2;                  // freq_cis_real (skipped in mapping)
-    n_floats += (UINTN)config.seq_len * (UINTN)head_size / 2;                  // freq_cis_imag (skipped in mapping)
-    if (!shared_classifier) {
-        n_floats += (UINTN)config.vocab_size * (UINTN)config.dim;              // wcls
-    }
-
-    bytes_to_read = n_floats * sizeof(float);
+    bytes_to_read = weights_bytes;
     float* weights_mem = (float*)simple_alloc(bytes_to_read);
-    UINTN bytes_read_weights = bytes_to_read;
-    status = uefi_call_wrapper(ModelFile->Read, 3, ModelFile, &bytes_read_weights, weights_mem);
-    if (EFI_ERROR(status) || bytes_read_weights != bytes_to_read) {
-        Print(L"❌ Failed to read weights (got %d bytes, expected %d)\r\n", (int)bytes_read_weights, (int)bytes_to_read);
+    if (weights_mem == NULL) {
+        Print(L"❌ Out of heap while allocating weights (%d MB needed)\r\n", (int)(bytes_to_read / (1024 * 1024)));
+        return EFI_OUT_OF_RESOURCES;
+    }
+    status = read_exact(ModelFile, weights_mem, bytes_to_read);
+    if (EFI_ERROR(status)) {
+        Print(L"❌ Failed to read weights (need model file + enough RAM).\r\n");
         return EFI_LOAD_ERROR;
     }
 
@@ -635,7 +878,13 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     Print(L"════════════════════════════════════════\r\n");
     Print(L"  CHAT MODE ACTIVE\r\n");
     Print(L"  Type 'quit' or 'exit' to stop\r\n");
+    Print(L"  Commands: /temp /top_p /repeat /help\r\n");
     Print(L"════════════════════════════════════════\r\n\r\n");
+    
+    // Sampling parameters
+    float temperature = 0.8f;
+    float top_p = 0.9f;
+    float repeat_penalty = 1.1f;
     
     int conversation_count = 0;
     
@@ -661,6 +910,91 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             break;
         }
         
+        // Check for commands
+        if (prompt[0] == '/') {
+            if (my_strncmp(prompt, "/temp ", 6) == 0) {
+                float val = 0.0f;
+                int i = 6;
+                while (prompt[i] >= '0' && prompt[i] <= '9') {
+                    val = val * 10.0f + (prompt[i] - '0');
+                    i++;
+                }
+                if (prompt[i] == '.') {
+                    i++;
+                    float frac = 0.1f;
+                    while (prompt[i] >= '0' && prompt[i] <= '9') {
+                        val += (prompt[i] - '0') * frac;
+                        frac /= 10.0f;
+                        i++;
+                    }
+                }
+                temperature = val;
+                Print(L"  Temperature set to: ");
+                Print(L"%d.", (int)temperature);
+                Print(L"%d\r\n", (int)((temperature - (int)temperature) * 100.0f));
+                continue;
+            } else if (my_strncmp(prompt, "/top_p ", 7) == 0) {
+                float val = 0.0f;
+                int i = 7;
+                while (prompt[i] >= '0' && prompt[i] <= '9') {
+                    val = val * 10.0f + (prompt[i] - '0');
+                    i++;
+                }
+                if (prompt[i] == '.') {
+                    i++;
+                    float frac = 0.1f;
+                    while (prompt[i] >= '0' && prompt[i] <= '9') {
+                        val += (prompt[i] - '0') * frac;
+                        frac /= 10.0f;
+                        i++;
+                    }
+                }
+                top_p = val;
+                Print(L"  Top-p set to: ");
+                Print(L"%d.", (int)top_p);
+                Print(L"%d\r\n", (int)((top_p - (int)top_p) * 100.0f));
+                continue;
+            } else if (my_strncmp(prompt, "/repeat ", 8) == 0) {
+                float val = 0.0f;
+                int i = 8;
+                while (prompt[i] >= '0' && prompt[i] <= '9') {
+                    val = val * 10.0f + (prompt[i] - '0');
+                    i++;
+                }
+                if (prompt[i] == '.') {
+                    i++;
+                    float frac = 0.1f;
+                    while (prompt[i] >= '0' && prompt[i] <= '9') {
+                        val += (prompt[i] - '0') * frac;
+                        frac /= 10.0f;
+                        i++;
+                    }
+                }
+                repeat_penalty = val;
+                Print(L"  Repetition penalty set to: ");
+                Print(L"%d.", (int)repeat_penalty);
+                Print(L"%d\r\n", (int)((repeat_penalty - (int)repeat_penalty) * 100.0f));
+                continue;
+            } else if (my_strncmp(prompt, "/help", 5) == 0) {
+                Print(L"\r\nCommands:\r\n");
+                Print(L"  /temp <val>   - Set temperature (0.0=greedy, 1.0=creative)\r\n");
+                Print(L"  /top_p <val>  - Set nucleus sampling (0.0-1.0)\r\n");
+                Print(L"  /repeat <val> - Set repetition penalty (1.0=none, 1.5=strong)\r\n");
+                Print(L"  /help         - Show this help\r\n\r\n");
+                Print(L"Current settings:\r\n");
+                Print(L"  Temperature: ");
+                Print(L"%d.", (int)temperature);
+                Print(L"%d\r\n", (int)((temperature - (int)temperature) * 100.0f));
+                Print(L"  Top-p: ");
+                Print(L"%d.", (int)top_p);
+                Print(L"%d\r\n", (int)((top_p - (int)top_p) * 100.0f));
+                Print(L"  Repeat penalty: ");
+                Print(L"%d.", (int)repeat_penalty);
+                Print(L"%d\r\n\r\n", (int)((repeat_penalty - (int)repeat_penalty) * 100.0f));
+                continue;
+            }
+        }
+        
         // Reset KV cache AND all state for new generation
         reset_kv_cache(&state, &config);
         
@@ -680,7 +1014,6 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         int n_prompt_tokens = 0;
         encode(prompt, prompt_tokens, &n_prompt_tokens, 256, &tokenizer);
         
-        Print(L"AI: ");
         Print(L"AI: ");
         
         // Process prompt tokens through model first (prefill)

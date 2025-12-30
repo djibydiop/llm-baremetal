@@ -3,6 +3,14 @@
 *.so
 *.efi
 
+# Windows build artifacts
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.lib
+*.exp
+
 # Images (on GitHub Releases only)
 *.img
 
@@ -15,8 +23,9 @@
 *.ucode
 *.tgz
 
-# OVMF (download separately)
+# OVMF / UEFI vars (download separately / generated locally)
 OVMF.fd
+*.fd
 
 # Logs and debug files
 *.log
@@ -27,11 +36,22 @@ DIAGNOSTIC.md
 # Local archived artifacts
 artifacts/
 
+# Local backups
+*.bak
+*.backup
+*.old
+
 # Temporary files
 SESSION_*.md
 GITHUB_UPLOAD.md
 serve_model.py
 test-*.ps1
+
+# Local notes (keep repo clean)
+CHAT_REPL_SUCCESS.md
+IMPLEMENTATION_COMPLETE.md
+OPTIMIZATIONS_GUIDE.md
+TEST_USB_GUIDE.md
 
 # Memory experiments (non essentiels)
 memory_adversarial.h
@@ -58,6 +78,40 @@ memory_zones_fixed.h
 
 # USB mount
 usb_mount/
+
+# Local test directory
+test_dir/
+
+# Local experiments / scratch files (kept out of main history)
+hello.c
+hello_efi.c
+test_minimal.c
+tinyblas.h
+matmul_advanced.h
+llama2_fixed.c
+llama2_simple.c
+llama2_step*.c
+llama2_repl_v*.c
+
+# Local helper scripts (use the tracked build/run entrypoints instead)
+compile-fix.sh
+compile-optimized.sh
+create-bootable-image.ps1
+create-bootable-image.sh
+create-bootable-usb.ps1
+create-bootable-wsl.sh
+create-image-simple.ps1
+debug-boot-failure.ps1
+diagnose-boot.ps1
+launch-qemu-simple.ps1
+launch-qemu.ps1
+run-qemu.ps1
+run-qemu.sh
+test-qemu-simple.sh
+test-qemu-wsl.sh
+test-qemu.sh
+verify-image.ps1
+write-usb-admin.ps1
 
 # VS Code
 .vscode/

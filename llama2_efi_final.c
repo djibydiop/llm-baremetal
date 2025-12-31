@@ -17,7 +17,7 @@
 #define N_KV_HEADS 6
 #define VOCAB_SIZE 32000
 #define SEQ_LEN 256
-#define MAX_TOKENS 100
+#define MAX_TOKENS 256
 
 // Token ids used by this tiny tokenizer export.
 // NOTE: encode() currently inserts BOS=1.
@@ -344,13 +344,46 @@ void transformer_forward(RunState* s, TransformerWeights* w, Config* p, int toke
 // Simple PRNG for sampling
 static unsigned int g_seed = 1234567;
 
+static void set_seed(unsigned int seed) {
+    // Avoid a zero seed getting stuck in some LCGs.
+    if (seed == 0) seed = 1;
+    g_seed = seed;
+}
+
+static unsigned long long rdtsc(void) {
+    unsigned int lo, hi;
+    // Serialize via LFENCE to reduce reordering noise.
+    __asm__ __volatile__("lfence\nrdtsc" : "=a"(lo), "=d"(hi) :: "memory");
+    return ((unsigned long long)hi << 32) | lo;
+}
+
+// 0 means "unavailable / calibration failed".
+static unsigned long long tsc_per_sec = 0;
+
+static void calibrate_tsc_once(void) {
+    if (tsc_per_sec != 0) return;
+    // Use UEFI Stall (microseconds) to estimate TSC frequency.
+    // 500ms gives decent accuracy even on coarse/slow TSC emulation.
+    unsigned long long t0 = rdtsc();
+    uefi_call_wrapper(BS->Stall, 1, 500000);
+    unsigned long long t1 = rdtsc();
+    unsigned long long dt = (t1 > t0) ? (t1 - t0) : 0;
+    // If dt is implausibly small, treat as unavailable.
+    if (dt < 1000ULL) {
+        tsc_per_sec = 0;
+        return;
+    }
+    // 500ms -> multiply by 2 to get cycles/sec.
+    tsc_per_sec = dt * 2ULL;
+}
+
 static float randf(void) {
     g_seed = g_seed * 1664525 + 1013904223;
     return (float)(g_seed >> 8) / 16777216.0f;
 }
 
-// Sample with temperature + top-p + top-k + repetition penalty
-int sample_advanced(float* logits, int n, float temperature, float top_p, int top_k,
+// Sample with temperature + min_p + top-p + top-k + repetition penalty
+int sample_advanced(float* logits, int n, float temperature, float min_p, float top_p, int top_k,
                     int* recent_tokens, int n_recent, float repeat_penalty) {
     // Apply repetition penalty
     if (repeat_penalty != 1.0f && n_recent > 0) {
@@ -396,6 +429,27 @@ int sample_advanced(float* logits, int n, float temperature, float top_p, int to
     }
     for (int i = 0; i < n; i++) {
         logits[i] /= sum;
+    }
+
+    // Min-p filtering (relative to max probability)
+    if (min_p > 0.0f) {
+        float max_p = 0.0f;
+        for (int i = 0; i < n; i++) {
+            if (logits[i] > max_p) max_p = logits[i];
+        }
+        float thresh = min_p * max_p;
+        float new_sum = 0.0f;
+        for (int i = 0; i < n; i++) {
+            if (logits[i] < thresh) {
+                logits[i] = 0.0f;
+            }
+            new_sum += logits[i];
+        }
+        if (new_sum > 0.0f) {
+            for (int i = 0; i < n; i++) {
+                logits[i] /= new_sum;
+            }
+        }
     }
     
     // Top-k / Top-p sampling
@@ -921,15 +975,20 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     Print(L"----------------------------------------\r\n");
     Print(L"  CHAT MODE ACTIVE\r\n");
     Print(L"  Type 'quit' or 'exit' to stop\r\n");
-    Print(L"  Commands: /temp /top_p /repeat /help\r\n");
+    Print(L"  Commands: /temp /min_p /top_p /top_k /norepeat /repeat /max_tokens /seed /stats /stop_you /stop_nl /help\r\n");
     Print(L"----------------------------------------\r\n\r\n");
     
     // Sampling parameters
     float temperature = 0.8f;
+    float min_p = 0.0f;
     float top_p = 0.9f;
     int top_k = 128;
     float repeat_penalty = 1.1f;
     int no_repeat_ngram = 4;
+    int max_gen_tokens = 128;
+    int stats_enabled = 1;
+    int stop_on_you = 1;
+    int stop_on_double_nl = 1;
     
     int conversation_count = 0;
     
@@ -978,6 +1037,29 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 Print(L"%d.", (int)temperature);
                 Print(L"%d\r\n", (int)((temperature - (int)temperature) * 100.0f));
                 continue;
+            } else if (my_strncmp(prompt, "/min_p ", 7) == 0) {
+                float val = 0.0f;
+                int i = 7;
+                while (prompt[i] >= '0' && prompt[i] <= '9') {
+                    val = val * 10.0f + (prompt[i] - '0');
+                    i++;
+                }
+                if (prompt[i] == '.') {
+                    i++;
+                    float frac = 0.1f;
+                    while (prompt[i] >= '0' && prompt[i] <= '9') {
+                        val += (prompt[i] - '0') * frac;
+                        frac /= 10.0f;
+                        i++;
+                    }
+                }
+                if (val < 0.0f) val = 0.0f;
+                if (val > 1.0f) val = 1.0f;
+                min_p = val;
+                Print(L"  Min-p set to: ");
+                Print(L"%d.", (int)min_p);
+                Print(L"%d\r\n", (int)((min_p - (int)min_p) * 100.0f));
+                continue;
             } else if (my_strncmp(prompt, "/top_p ", 7) == 0) {
                 float val = 0.0f;
                 int i = 7;
@@ -1010,6 +1092,58 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 if (val > 256) val = 256;
                 top_k = val;
                 Print(L"  Top-k set to: %d\r\n", top_k);
+                continue;
+            } else if (my_strncmp(prompt, "/max_tokens ", 12) == 0) {
+                int val = 0;
+                int i = 12;
+                while (prompt[i] >= '0' && prompt[i] <= '9') {
+                    val = val * 10 + (prompt[i] - '0');
+                    i++;
+                }
+                if (val < 1) val = 1;
+                if (val > MAX_TOKENS) val = MAX_TOKENS;
+                max_gen_tokens = val;
+                Print(L"  Max tokens set to: %d\r\n", max_gen_tokens);
+                continue;
+            } else if (my_strncmp(prompt, "/seed ", 6) == 0) {
+                unsigned int val = 0;
+                int i = 6;
+                while (prompt[i] >= '0' && prompt[i] <= '9') {
+                    val = val * 10u + (unsigned int)(prompt[i] - '0');
+                    i++;
+                }
+                set_seed(val);
+                Print(L"  Seed set to: %d\r\n", (int)g_seed);
+                continue;
+            } else if (my_strncmp(prompt, "/stats ", 7) == 0) {
+                int val = 0;
+                int i = 7;
+                while (prompt[i] >= '0' && prompt[i] <= '9') {
+                    val = val * 10 + (prompt[i] - '0');
+                    i++;
+                }
+                stats_enabled = (val != 0);
+                Print(L"  Stats: %s\r\n", stats_enabled ? L"on" : L"off");
+                continue;
+            } else if (my_strncmp(prompt, "/stop_you ", 10) == 0) {
+                int val = 0;
+                int i = 10;
+                while (prompt[i] >= '0' && prompt[i] <= '9') {
+                    val = val * 10 + (prompt[i] - '0');
+                    i++;
+                }
+                stop_on_you = (val != 0);
+                Print(L"  Stop on \\nYou:: %s\r\n", stop_on_you ? L"on" : L"off");
+                continue;
+            } else if (my_strncmp(prompt, "/stop_nl ", 9) == 0) {
+                int val = 0;
+                int i = 9;
+                while (prompt[i] >= '0' && prompt[i] <= '9') {
+                    val = val * 10 + (prompt[i] - '0');
+                    i++;
+                }
+                stop_on_double_nl = (val != 0);
+                Print(L"  Stop on double newline: %s\r\n", stop_on_double_nl ? L"on" : L"off");
                 continue;
             } else if (my_strncmp(prompt, "/norepeat ", 10) == 0) {
                 int val = 0;
@@ -1047,20 +1181,33 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             } else if (my_strncmp(prompt, "/help", 5) == 0) {
                 Print(L"\r\nCommands:\r\n");
                 Print(L"  /temp <val>   - Set temperature (0.0=greedy, 1.0=creative)\r\n");
+                Print(L"  /min_p <val>  - Set min_p (0.0-1.0, 0=off)\r\n");
                 Print(L"  /top_p <val>  - Set nucleus sampling (0.0-1.0)\r\n");
                 Print(L"  /top_k <int>  - Set top-k (0=off, typical 40-200)\r\n");
                 Print(L"  /norepeat <n> - No-repeat ngram (0=off, typical 3-6)\r\n");
+                Print(L"  /max_tokens <n> - Max generation tokens (1-256)\r\n");
+                Print(L"  /seed <n>       - RNG seed\r\n");
+                Print(L"  /stats <0|1>    - Print generation stats\r\n");
+                Print(L"  /stop_you <0|1> - Stop on \\nYou: pattern\r\n");
+                Print(L"  /stop_nl <0|1>  - Stop on double newline\r\n");
                 Print(L"  /repeat <val> - Set repetition penalty (1.0=none, 1.5=strong)\r\n");
                 Print(L"  /help         - Show this help\r\n\r\n");
                 Print(L"Current settings:\r\n");
                 Print(L"  Temperature: ");
                 Print(L"%d.", (int)temperature);
                 Print(L"%d\r\n", (int)((temperature - (int)temperature) * 100.0f));
+                Print(L"  Min-p: ");
+                Print(L"%d.", (int)min_p);
+                Print(L"%d\r\n", (int)((min_p - (int)min_p) * 100.0f));
                 Print(L"  Top-p: ");
                 Print(L"%d.", (int)top_p);
                 Print(L"%d\r\n", (int)((top_p - (int)top_p) * 100.0f));
                 Print(L"  Top-k: %d\r\n", top_k);
                 Print(L"  No-repeat ngram: %d\r\n", no_repeat_ngram);
+                Print(L"  Max tokens: %d\r\n", max_gen_tokens);
+                Print(L"  Stats: %s\r\n", stats_enabled ? L"on" : L"off");
+                Print(L"  Stop on \\nYou:: %s\r\n", stop_on_you ? L"on" : L"off");
+                Print(L"  Stop on double newline: %s\r\n", stop_on_double_nl ? L"on" : L"off");
                 Print(L"  Repeat penalty: ");
                 Print(L"%d.", (int)repeat_penalty);
                 Print(L"%d\r\n\r\n", (int)((repeat_penalty - (int)repeat_penalty) * 100.0f));
@@ -1111,7 +1258,18 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             context_tokens[n_context_tokens++] = prompt_tokens[i];
         }
 
-        for (int step = 0; step < MAX_TOKENS; step++) {
+        // Simple stop detection on the last bytes printed.
+        char out_tail[64];
+        int out_tail_len = 0;
+        for (int i = 0; i < 64; i++) out_tail[i] = 0;
+
+        unsigned long long gen_t0 = 0;
+        if (stats_enabled) {
+            calibrate_tsc_once();
+            gen_t0 = rdtsc();
+        }
+
+        for (int step = 0; step < max_gen_tokens; step++) {
             // We sample from the logits produced by the previous forward pass.
             // For step==0, logits come from the final prompt token (prefill).
 
@@ -1124,7 +1282,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             int n_recent = n_context_tokens;
             if (n_recent > 64) n_recent = 64;
             int* recent = (n_recent > 0) ? &context_tokens[n_context_tokens - n_recent] : (int*)0;
-            next = sample_advanced(state.logits, config.vocab_size, temperature, top_p, top_k, recent, n_recent, repeat_penalty);
+            next = sample_advanced(state.logits, config.vocab_size, temperature, min_p, top_p, top_k, recent, n_recent, repeat_penalty);
             
             // Check for EOS (some exports may still emit BOS; treat both as stop)
             if (next == TOKEN_EOS || next == TOKEN_BOS) break;
@@ -1152,6 +1310,40 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                     wpiece[copy_len] = 0;
                     Print(L"%s", wpiece);
                     generated_count++;
+
+                    // Update ASCII tail buffer for stop detection.
+                    for (int k = 0; k < len; k++) {
+                        char ch = piece[k];
+                        if (out_tail_len < (int)sizeof(out_tail) - 1) {
+                            out_tail[out_tail_len++] = ch;
+                            out_tail[out_tail_len] = 0;
+                        } else {
+                            // shift left by 1
+                            for (int s = 0; s < (int)sizeof(out_tail) - 2; s++) out_tail[s] = out_tail[s + 1];
+                            out_tail[(int)sizeof(out_tail) - 2] = ch;
+                            out_tail[(int)sizeof(out_tail) - 1] = 0;
+                        }
+                    }
+
+                    // Stop conditions
+                    if (stop_on_double_nl) {
+                        // Look for "\n\n" in tail.
+                        for (int i = 0; i + 1 < out_tail_len; i++) {
+                            if (out_tail[i] == '\n' && out_tail[i + 1] == '\n') {
+                                step = max_gen_tokens; // force exit
+                                break;
+                            }
+                        }
+                    }
+                    if (stop_on_you) {
+                        // Look for "\nYou:" in tail.
+                        for (int i = 0; i + 4 < out_tail_len; i++) {
+                            if (out_tail[i] == '\n' && out_tail[i + 1] == 'Y' && out_tail[i + 2] == 'o' && out_tail[i + 3] == 'u' && out_tail[i + 4] == ':') {
+                                step = max_gen_tokens; // force exit
+                                break;
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1172,6 +1364,18 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             pos++;
             if (pos >= config.seq_len) break;
             transformer_forward(&state, &weights, &config, token, pos);
+        }
+
+        if (stats_enabled) {
+            unsigned long long gen_t1 = rdtsc();
+            unsigned long long dt = (gen_t1 > gen_t0) ? (gen_t1 - gen_t0) : 0;
+            if (tsc_per_sec == 0 || dt == 0) {
+                Print(L"\r\n[stats] tokens=%d cycles=%d\r\n", generated_count, (int)dt);
+            } else {
+                unsigned long long ms = (dt * 1000ULL) / tsc_per_sec;
+                unsigned long long tps = ((unsigned long long)generated_count * tsc_per_sec) / dt;
+                Print(L"\r\n[stats] tokens=%d time_ms=%d tok_s=%d\r\n", generated_count, (int)ms, (int)tps);
+            }
         }
         
         Print(L"\r\n\r\n");

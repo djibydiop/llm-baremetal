@@ -979,16 +979,17 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     Print(L"----------------------------------------\r\n\r\n");
     
     // Sampling parameters
-    float temperature = 0.8f;
-    float min_p = 0.0f;
-    float top_p = 0.9f;
-    int top_k = 128;
-    float repeat_penalty = 1.1f;
+    // Default sampling tuned for TinyStories (less looping, still creative).
+    float temperature = 0.85f;
+    float min_p = 0.05f;
+    float top_p = 0.95f;
+    int top_k = 80;
+    float repeat_penalty = 1.15f;
     int no_repeat_ngram = 4;
-    int max_gen_tokens = 128;
+    int max_gen_tokens = 160;
     int stats_enabled = 1;
     int stop_on_you = 1;
-    int stop_on_double_nl = 1;
+    int stop_on_double_nl = 0;
     
     int conversation_count = 0;
     

@@ -1,6 +1,8 @@
 param(
   [switch]$NewWindow,
-  [switch]$Gui
+  [switch]$Gui,
+  # If set, returns QEMU's raw exit code instead of normalizing.
+  [switch]$PassThroughExitCode
 )
 
 # Run QEMU (single entrypoint)
@@ -14,7 +16,7 @@ if (-not (Test-Path $QEMU)) { throw "QEMU not found: $QEMU" }
 if (-not (Test-Path $OVMF)) { throw "OVMF not found: $OVMF" }
 if (-not (Test-Path $IMAGE)) { throw "Image not found: $IMAGE (run .\build.ps1 first)" }
 
-Write-Host "🚀 Launching QEMU" -ForegroundColor Cyan
+Write-Host "[Run] Launching QEMU" -ForegroundColor Cyan
 Write-Host "  Image: $IMAGE" -ForegroundColor Gray
 
 $args = @(
@@ -40,9 +42,9 @@ if ($Gui) {
   ) + $args
 }
 
-Write-Host "🎮 QEMU running (Ctrl+C to stop)" -ForegroundColor Green
+Write-Host "[Run] QEMU running (Ctrl+C to stop)" -ForegroundColor Green
 if ($NewWindow) {
-  Write-Host "🪟 Launching QEMU in a new window" -ForegroundColor Yellow
+  Write-Host "[Run] Launching QEMU in a new window" -ForegroundColor Yellow
 
   function Quote-PS([string]$s) {
     if ($s -match '^[a-zA-Z0-9_\-\.:,=]+$') { return $s }
@@ -63,4 +65,22 @@ if ($NewWindow) {
   }
 } else {
   & $QEMU @args
+
+  $code = $LASTEXITCODE
+
+  if ($PassThroughExitCode) {
+    exit $code
+  }
+
+  # Normalize common QEMU exit codes so scripts don't fail on expected exits.
+  # QEMU often returns 1 for various benign termination paths (window close, firmware reset, etc.).
+  if ($code -eq 0 -or $code -eq 1) {
+    if ($code -ne 0) {
+      Write-Host ("[Run] QEMU exited with code {0} (normalized to success)" -f $code) -ForegroundColor Yellow
+    }
+    exit 0
+  }
+
+  Write-Host ("[Run] QEMU exited with code {0}" -f $code) -ForegroundColor Red
+  exit $code
 }

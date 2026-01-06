@@ -18,18 +18,18 @@ LIBS = -lefi -lgnuefi
 TARGET = llama2.efi
 REPL_SRC = llama2_efi_final.c
 REPL_OBJ = llama2_repl.o
-REPL_OBJS = $(REPL_OBJ) djiblas.o
+REPL_OBJS = $(REPL_OBJ) llmk_zones.o llmk_log.o llmk_sentinel.o djiblas.o djiblas_avx2.o attention_avx2.o
 REPL_SO  = llama2_repl.so
 
 # LLM-Kernel (new clean workstream)
 LLMK_TARGET = llmkernel.efi
 LLMK_SRC = llm_kernel_efi.c
-LLMK_OBJS = llm_kernel_efi.o llmk_zones.o llmk_sentinel.o djiblas.o
+LLMK_OBJS = llm_kernel_efi.o llmk_zones.o llmk_log.o llmk_sentinel.o llmk_infer.o djiblas.o djiblas_avx2.o attention_avx2.o
 LLMK_SO = llmkernel.so
 
 # Legacy/optimized build (kept for djiblas experiments)
 KERNEL_SRC = llama2_efi.c
-KERNEL_OBJS = llama2_efi.o djiblas.o
+KERNEL_OBJS = llama2_efi.o djiblas.o djiblas_avx2.o attention_avx2.o
 KERNEL_SO = llama2_efi.so
 
 all: repl
@@ -45,13 +45,19 @@ llmkernel: $(LLMK_TARGET)
 	@echo "✅ Build complete: $(LLMK_TARGET)"
 	@ls -lh $(LLMK_TARGET)
 
-llm_kernel_efi.o: $(LLMK_SRC) djiblas.h llmk_zones.h llmk_sentinel.h
+llm_kernel_efi.o: $(LLMK_SRC) djiblas.h llmk_zones.h llmk_log.h llmk_sentinel.h llmk_infer.h
 	$(CC) $(CFLAGS) -c $(LLMK_SRC) -o llm_kernel_efi.o
+
+llmk_infer.o: llmk_infer.c llmk_infer.h llmk_zones.h llmk_sentinel.h llmk_log.h djiblas.h
+	$(CC) $(CFLAGS) -c llmk_infer.c -o llmk_infer.o
 
 llmk_zones.o: llmk_zones.c llmk_zones.h
 	$(CC) $(CFLAGS) -c llmk_zones.c -o llmk_zones.o
 
-llmk_sentinel.o: llmk_sentinel.c llmk_sentinel.h llmk_zones.h
+llmk_log.o: llmk_log.c llmk_log.h llmk_zones.h
+	$(CC) $(CFLAGS) -c llmk_log.c -o llmk_log.o
+
+llmk_sentinel.o: llmk_sentinel.c llmk_sentinel.h llmk_zones.h llmk_log.h
 	$(CC) $(CFLAGS) -c llmk_sentinel.c -o llmk_sentinel.o
 
 $(LLMK_SO): $(LLMK_OBJS)
@@ -77,6 +83,12 @@ llama2_efi.o: $(KERNEL_SRC) djiblas.h
 
 djiblas.o: djiblas.c djiblas.h
 	$(CC) $(CFLAGS) -c djiblas.c -o djiblas.o
+
+djiblas_avx2.o: djiblas_avx2.c djiblas.h
+	$(CC) $(CFLAGS) -mavx2 -mfma -c djiblas_avx2.c -o djiblas_avx2.o
+
+attention_avx2.o: attention_avx2.c
+	$(CC) $(CFLAGS) -mavx2 -c attention_avx2.c -o attention_avx2.o
 
 $(KERNEL_SO): $(KERNEL_OBJS)
 	ld $(LDFLAGS) $(KERNEL_OBJS) -o $(KERNEL_SO) $(LIBS)

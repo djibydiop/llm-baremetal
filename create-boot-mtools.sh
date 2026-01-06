@@ -15,9 +15,14 @@ echo ""
 #   MODEL_BIN=stories110M.bin ./create-boot-mtools.sh
 MODEL_BIN="${MODEL_BIN:-stories15M.bin}"
 
+# EFI payload selection (default: llama2.efi)
+# Usage:
+#   EFI_BIN=llmkernel.efi ./create-boot-mtools.sh
+EFI_BIN="${EFI_BIN:-llama2.efi}"
+
 # Check required files
 echo "[1/4] Checking required files..."
-for file in llama2.efi tokenizer.bin; do
+for file in "$EFI_BIN" tokenizer.bin; do
     if [ ! -f "$file" ]; then
         echo "❌ Missing: $file"
         exit 1
@@ -45,7 +50,15 @@ if [ $IMAGE_MIB -lt 100 ]; then IMAGE_MIB=100; fi
 
 echo "[2/4] Creating ${IMAGE_MIB}MB FAT32 image..."
 IMAGE="llm-baremetal-boot.img"
-rm -f "$IMAGE"
+
+# On Windows hosts, a running QEMU may keep the image open, which prevents
+# deletion from WSL (/mnt/c) and would otherwise abort the build.
+rm -f "$IMAGE" 2>/dev/null || true
+if [ -f "$IMAGE" ]; then
+    ts="$(date +%Y%m%d-%H%M%S)"
+    IMAGE="llm-baremetal-boot-${ts}.img"
+    echo "  ⚠️  Existing image is in use; writing new image: $IMAGE"
+fi
 dd if=/dev/zero of="$IMAGE" bs=1M count=$IMAGE_MIB status=progress
 echo "✅ Image created"
 
@@ -78,12 +91,12 @@ echo ""
 echo "[4/4] Copying files with mtools..."
 mmd z:/EFI
 mmd z:/EFI/BOOT
-mcopy llama2.efi z:/EFI/BOOT/BOOTX64.EFI
+mcopy "$EFI_BIN" z:/EFI/BOOT/BOOTX64.EFI
 echo "  ✅ Copied BOOTX64.EFI"
 
 # Also keep a convenient copy at the root for manual launch in the UEFI shell
-mcopy llama2.efi z:/LLAMA2.EFI
-echo "  ✅ Copied LLAMA2.EFI"
+mcopy "$EFI_BIN" z:/KERNEL.EFI
+echo "  ✅ Copied KERNEL.EFI"
 
 mcopy "$MODEL_SRC" z:/"$(basename "$MODEL_BIN")"
 echo "  ✅ Copied $(basename "$MODEL_BIN") (${MODEL_MIB} MB)"
@@ -91,8 +104,16 @@ echo "  ✅ Copied $(basename "$MODEL_BIN") (${MODEL_MIB} MB)"
 mcopy tokenizer.bin z:/
 echo "  ✅ Copied tokenizer.bin"
 
-# Create startup.nsh for auto-boot
-echo "\\EFI\\BOOT\\BOOTX64.EFI" > startup.nsh
+# Create startup.nsh for auto-boot.
+# Keep the UEFI shell alive after BOOTX64.EFI returns (avoids landing in the firmware boot manager UI).
+cat > startup.nsh <<'EOF'
+echo -off
+\EFI\BOOT\BOOTX64.EFI
+echo.
+echo BOOTX64.EFI returned. You are in the UEFI shell.
+echo Type 'reset' to reboot or 'poweroff' to exit.
+pause
+EOF
 mcopy startup.nsh z:/
 rm -f startup.nsh
 echo "  ✅ Copied startup.nsh"

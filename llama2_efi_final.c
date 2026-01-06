@@ -5,9 +5,18 @@
 #include <efilib.h>
 #include <stdint.h>
 
+#if defined(__x86_64__) || defined(_M_X64)
+#include <emmintrin.h>
+#endif
+
 // djiblas optimized matmul
-#define DJIBLAS_DISABLE_CPUID 1
+#define DJIBLAS_DISABLE_CPUID 0
 #include "djiblas.h"
+
+// LLM-Kernel primitives (zones + sentinel + post-mortem log)
+#include "llmk_zones.h"
+#include "llmk_log.h"
+#include "llmk_sentinel.h"
 
 // Model config
 #define DIM 288
@@ -31,6 +40,69 @@ static int has_suffix_repeat(const int* tokens, int n_tokens, int span) {
         if (tokens[n_tokens - span + i] != tokens[n_tokens - 2 * span + i]) return 0;
     }
     return 1;
+}
+
+// AVX2 attention helpers live in attention_avx2.c (compiled with -mavx2)
+float llmk_dot_f32_avx2(const float *a, const float *b, int n);
+void llmk_axpy_f32_avx2(float *dst, const float *src, float alpha, int n);
+
+static int g_attn_use_avx2 = 0;
+
+// Best-effort: enable AVX state (OSXSAVE + XCR0) in UEFI so AVX/AVX2 code can run.
+// Without an OS, some firmwares leave XCR0 unset; QEMU/OVMF often does.
+static inline void cpuidex_u32(UINT32 leaf, UINT32 subleaf, UINT32 *eax, UINT32 *ebx, UINT32 *ecx, UINT32 *edx) {
+    UINT32 a, b, c, d;
+    __asm__ volatile(
+        "cpuid"
+        : "=a"(a), "=b"(b), "=c"(c), "=d"(d)
+        : "a"(leaf), "c"(subleaf)
+        : "memory"
+    );
+    if (eax) *eax = a;
+    if (ebx) *ebx = b;
+    if (ecx) *ecx = c;
+    if (edx) *edx = d;
+}
+
+static inline UINT64 read_cr4_u64(void) {
+    UINT64 v;
+    __asm__ volatile("mov %%cr4, %0" : "=r"(v));
+    return v;
+}
+
+static inline void write_cr4_u64(UINT64 v) {
+    __asm__ volatile("mov %0, %%cr4" :: "r"(v) : "memory");
+}
+
+static void enable_avx_best_effort(void) {
+    UINT32 eax, ebx, ecx, edx;
+    cpuidex_u32(1, 0, &eax, &ebx, &ecx, &edx);
+    int has_xsave = (ecx & (1u << 26)) != 0;
+    int has_avx_hw = (ecx & (1u << 28)) != 0;
+    if (!has_xsave || !has_avx_hw) return;
+
+    // Enable OSXSAVE in CR4 (bit 18).
+    UINT64 cr4 = read_cr4_u64();
+    if ((cr4 & (1ULL << 18)) == 0) {
+        write_cr4_u64(cr4 | (1ULL << 18));
+    }
+
+    // Enable x87 (bit0), XMM (bit1), YMM (bit2) state in XCR0.
+    UINT32 xcr0_lo, xcr0_hi;
+    __asm__ volatile(
+        "xgetbv"
+        : "=a"(xcr0_lo), "=d"(xcr0_hi)
+        : "c"(0)
+        : "memory"
+    );
+    UINT32 new_lo = xcr0_lo | 0x7u;
+    if (new_lo != xcr0_lo) {
+        __asm__ volatile(
+            "xsetbv"
+            :: "a"(new_lo), "d"(xcr0_hi), "c"(0)
+            : "memory"
+        );
+    }
 }
 
 static void apply_no_repeat_ngram(float* logits, int vocab_size, const int* tokens, int n_tokens, int ngram) {
@@ -58,6 +130,53 @@ static void apply_no_repeat_ngram(float* logits, int vocab_size, const int* toke
     }
 }
 
+static inline float dot_f32_sse2(const float* a, const float* b, int n) {
+#if defined(__x86_64__) || defined(_M_X64)
+    __m128 sum = _mm_setzero_ps();
+    int i = 0;
+    for (; i + 4 <= n; i += 4) {
+        __m128 va = _mm_loadu_ps(a + i);
+        __m128 vb = _mm_loadu_ps(b + i);
+        sum = _mm_add_ps(sum, _mm_mul_ps(va, vb));
+    }
+    float tmp[4];
+    _mm_storeu_ps(tmp, sum);
+    float total = tmp[0] + tmp[1] + tmp[2] + tmp[3];
+    for (; i < n; i++) total += a[i] * b[i];
+    return total;
+#else
+    float total = 0.0f;
+    for (int i = 0; i < n; i++) total += a[i] * b[i];
+    return total;
+#endif
+}
+
+static inline void axpy_f32_sse2(float* dst, const float* src, float a, int n) {
+#if defined(__x86_64__) || defined(_M_X64)
+    __m128 va = _mm_set1_ps(a);
+    int i = 0;
+    for (; i + 4 <= n; i += 4) {
+        __m128 vd = _mm_loadu_ps(dst + i);
+        __m128 vs = _mm_loadu_ps(src + i);
+        vd = _mm_add_ps(vd, _mm_mul_ps(va, vs));
+        _mm_storeu_ps(dst + i, vd);
+    }
+    for (; i < n; i++) dst[i] += a * src[i];
+#else
+    for (int i = 0; i < n; i++) dst[i] += a * src[i];
+#endif
+}
+
+static inline float dot_f32_best(const float* a, const float* b, int n) {
+    if (g_attn_use_avx2) return llmk_dot_f32_avx2(a, b, n);
+    return dot_f32_sse2(a, b, n);
+}
+
+static inline void axpy_f32_best(float* dst, const float* src, float a, int n) {
+    if (g_attn_use_avx2) { llmk_axpy_f32_avx2(dst, src, a, n); return; }
+    axpy_f32_sse2(dst, src, a, n);
+}
+
 // ============================================================================
 // HEAP ALLOCATOR
 // ============================================================================
@@ -66,7 +185,63 @@ static char* heap_base = NULL;
 static unsigned long heap_offset = 0;
 static unsigned long heap_size = 0;
 
+static LlmkZones g_zones;
+static LlmkLog g_llmk_log;
+static LlmkSentinel g_sentinel;
+static int g_llmk_ready = 0;
+
+static UINT64 g_budget_prefill_cycles = 0;
+static UINT64 g_budget_decode_cycles = 0;
+
+// Rate-limit budget overrun prints (avoid flooding console).
+static UINT32 g_budget_overruns_prefill = 0;
+static UINT32 g_budget_overruns_decode = 0;
+
+static UINT64 llmk_u64_max(UINT64 a, UINT64 b) { return (a > b) ? a : b; }
+
+static void llmk_budget_update(UINT64 *budget, UINT64 last_dt) {
+    // Adaptive budget: target = last_dt * margin, then EMA to smooth.
+    // Margin must tolerate pos growth and occasional slowdowns.
+    const UINT64 margin = 6ULL;
+    UINT64 target = last_dt * margin;
+    if (target < 500000ULL) target = 500000ULL;
+    if (*budget == 0) {
+        *budget = target;
+        return;
+    }
+    UINT64 prev = *budget;
+    // If we started from a huge initial budget, snap down quickly once we have a real measurement.
+    if (prev > target * 4ULL) {
+        *budget = target;
+        return;
+    }
+    // EMA: new = (7/8)*old + (1/8)*target
+    *budget = ((*budget * 7ULL) + target) / 8ULL;
+    // Never decrease too aggressively; keep at least 80% of previous.
+    *budget = llmk_u64_max(*budget, (prev * 4ULL) / 5ULL);
+}
+
+static void* llmk_alloc_acts(UINT64 bytes, const CHAR16* tag) {
+    if (!g_llmk_ready) return NULL;
+    return llmk_sentinel_alloc(&g_sentinel, LLMK_ARENA_ACTIVATIONS, bytes, 16, tag);
+}
+
+static void* llmk_alloc_weights(UINT64 bytes, const CHAR16* tag) {
+    if (!g_llmk_ready) return NULL;
+    return llmk_sentinel_alloc(&g_sentinel, LLMK_ARENA_WEIGHTS, bytes, 64, tag);
+}
+
+static void* llmk_alloc_kv(UINT64 bytes, const CHAR16* tag) {
+    if (!g_llmk_ready) return NULL;
+    return llmk_sentinel_alloc(&g_sentinel, LLMK_ARENA_KV_CACHE, bytes, 64, tag);
+}
+
 void* simple_alloc(unsigned long bytes) {
+    // Backward-compatible interface: route default allocations into ACTS arena
+    // once the kernel allocator is initialized.
+    if (g_llmk_ready) {
+        return llmk_alloc_acts((UINT64)bytes, L"repl alloc");
+    }
     if (heap_offset + bytes > heap_size) return NULL;
     void* ptr = heap_base + heap_offset;
     heap_offset += bytes;
@@ -170,17 +345,80 @@ void matmul(float* xout, float* x, float* w, int n, int d) {
 
 void softmax(float* x, int size) {
     float max_val = x[0];
+#if defined(__x86_64__) || defined(_M_X64)
+    // SSE2 max reduction
+    {
+        __m128 vmax = _mm_set1_ps(max_val);
+        int i = 0;
+        for (; i + 4 <= size; i += 4) {
+            __m128 v = _mm_loadu_ps(&x[i]);
+            vmax = _mm_max_ps(vmax, v);
+        }
+        __m128 shuf = _mm_shuffle_ps(vmax, vmax, _MM_SHUFFLE(2, 3, 0, 1));
+        vmax = _mm_max_ps(vmax, shuf);
+        shuf = _mm_shuffle_ps(vmax, vmax, _MM_SHUFFLE(1, 0, 3, 2));
+        vmax = _mm_max_ps(vmax, shuf);
+        _mm_store_ss(&max_val, vmax);
+        for (; i < size; i++) {
+            if (x[i] > max_val) max_val = x[i];
+        }
+    }
+#else
     for (int i = 1; i < size; i++) {
         if (x[i] > max_val) max_val = x[i];
     }
+#endif
+
     float sum = 0.0f;
+#if defined(__x86_64__) || defined(_M_X64)
+    // Scalar exp, but vectorized accumulation + normalization.
+    {
+        __m128 vsum = _mm_setzero_ps();
+        int i = 0;
+        for (; i + 4 <= size; i += 4) {
+            float e0 = fast_exp(x[i + 0] - max_val);
+            float e1 = fast_exp(x[i + 1] - max_val);
+            float e2 = fast_exp(x[i + 2] - max_val);
+            float e3 = fast_exp(x[i + 3] - max_val);
+            x[i + 0] = e0;
+            x[i + 1] = e1;
+            x[i + 2] = e2;
+            x[i + 3] = e3;
+            __m128 v = _mm_loadu_ps(&x[i]);
+            vsum = _mm_add_ps(vsum, v);
+        }
+        __m128 shuf = _mm_shuffle_ps(vsum, vsum, _MM_SHUFFLE(2, 3, 0, 1));
+        vsum = _mm_add_ps(vsum, shuf);
+        shuf = _mm_shuffle_ps(vsum, vsum, _MM_SHUFFLE(1, 0, 3, 2));
+        vsum = _mm_add_ps(vsum, shuf);
+        _mm_store_ss(&sum, vsum);
+        for (; i < size; i++) {
+            x[i] = fast_exp(x[i] - max_val);
+            sum += x[i];
+        }
+
+        float invsum = 1.0f / sum;
+        __m128 vinv = _mm_set1_ps(invsum);
+        i = 0;
+        for (; i + 4 <= size; i += 4) {
+            __m128 v = _mm_loadu_ps(&x[i]);
+            v = _mm_mul_ps(v, vinv);
+            _mm_storeu_ps(&x[i], v);
+        }
+        for (; i < size; i++) {
+            x[i] *= invsum;
+        }
+    }
+#else
     for (int i = 0; i < size; i++) {
         x[i] = fast_exp(x[i] - max_val);
         sum += x[i];
     }
+    float invsum = 1.0f / sum;
     for (int i = 0; i < size; i++) {
-        x[i] /= sum;
+        x[i] *= invsum;
     }
+#endif
 }
 
 // ============================================================================
@@ -276,15 +514,12 @@ void transformer_forward(RunState* s, TransformerWeights* w, Config* p, int toke
         for (int h = 0; h < n_heads; h++) {
             float* q_h = s->q + h * head_size;
             int att_offset = h * p->seq_len;
+            float inv_scale = 1.0f / fast_sqrt((float)head_size);
             
             // Attention scores
             for (int t = 0; t <= pos; t++) {
                 float* k_t = s->key_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
-                float score = 0.0f;
-                for (int i = 0; i < head_size; i++) {
-                    score += q_h[i] * k_t[i];
-                }
-                score /= fast_sqrt((float)head_size);
+                float score = dot_f32_best(q_h, k_t, head_size) * inv_scale;
                 s->att[att_offset + t] = score;
             }
             
@@ -298,9 +533,7 @@ void transformer_forward(RunState* s, TransformerWeights* w, Config* p, int toke
             for (int t = 0; t <= pos; t++) {
                 float* v_t = s->value_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
                 float a = s->att[att_offset + t];
-                for (int i = 0; i < head_size; i++) {
-                    xb_h[i] += a * v_t[i];
-                }
+                axpy_f32_best(xb_h, v_t, a, head_size);
             }
         }
         
@@ -359,6 +592,23 @@ static unsigned long long rdtsc(void) {
 
 // 0 means "unavailable / calibration failed".
 static unsigned long long tsc_per_sec = 0;
+
+// Best-effort wall-clock microsecond timestamp using UEFI GetTime.
+// Returns 1 on success, 0 on failure.
+static int uefi_wall_us(unsigned long long *out_us) {
+    if (!out_us) return 0;
+    if (!ST || !ST->RuntimeServices || !ST->RuntimeServices->GetTime) return 0;
+    EFI_TIME t;
+    EFI_STATUS st = uefi_call_wrapper(ST->RuntimeServices->GetTime, 2, &t, NULL);
+    if (EFI_ERROR(st)) return 0;
+    // Seconds-of-day is sufficient for short deltas (we handle midnight wrap).
+    unsigned long long sod = (unsigned long long)t.Hour * 3600ULL + (unsigned long long)t.Minute * 60ULL + (unsigned long long)t.Second;
+    unsigned long long us = sod * 1000000ULL;
+    // Nanosecond is defined by EFI_TIME; firmware may provide 0.
+    us += ((unsigned long long)t.Nanosecond) / 1000ULL;
+    *out_us = us;
+    return 1;
+}
 
 static void calibrate_tsc_once(void) {
     if (tsc_per_sec != 0) return;
@@ -718,11 +968,29 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     
     Print(L"OK: File system ready\r\n\r\n");
 
-    // CPU feature detection (djiblas) - TEMPORARILY DISABLED (CPUID issue in UEFI)
-    // Print(L"[1.5/7] Detecting CPU features...\r\n");
-    // CPUFeatures cpu_features;
-    // djiblas_detect_cpu(&cpu_features);
-    Print(L"[DJIBLAS] Using optimized SGEMM (SSE2 baseline)\r\n\r\n");
+    // Best-effort enable AVX/AVX2 state before feature detection.
+    enable_avx_best_effort();
+
+    // CPU feature detection (djiblas)
+    {
+        CPUFeatures cpu_features;
+        djiblas_detect_cpu(&cpu_features);
+        sgemm_kernel_t k = djiblas_get_best_kernel(&cpu_features);
+        const CHAR16 *name = L"SCALAR";
+        if (k == djiblas_sgemm_avx512) name = L"AVX512";
+        else if (k == djiblas_sgemm_avx2) name = (cpu_features.has_fma ? L"AVX2+FMA" : L"AVX2");
+        else if (k == djiblas_sgemm_sse2) name = L"SSE2";
+        Print(L"[DJIBLAS] SGEMM kernel: %s (sse2=%d avx=%d avx2=%d fma=%d)\r\n\r\n",
+              name,
+              (int)cpu_features.has_sse2,
+              (int)cpu_features.has_avx,
+              (int)cpu_features.has_avx2,
+              (int)cpu_features.has_fma);
+
+          // Attention SIMD dispatch: only use AVX2 if firmware/OS state supports it.
+          g_attn_use_avx2 = (cpu_features.has_avx2 && cpu_features.has_avx);
+          Print(L"[ATTN] SIMD path: %s\r\n\r\n", g_attn_use_avx2 ? L"AVX2" : L"SSE2");
+    }
     
     // ========================================================================
     // [2/7] Load Model Header
@@ -731,14 +999,34 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     Print(L"[2/7] Loading model...\r\n");
     
     EFI_FILE_HANDLE ModelFile;
-    CHAR16 *model_filename = L"stories110M.bin";
-    status = uefi_call_wrapper(Root->Open, 5, Root, &ModelFile, model_filename, EFI_FILE_MODE_READ, 0);
-    if (EFI_ERROR(status)) {
-        model_filename = L"stories15M.bin";
-        status = uefi_call_wrapper(Root->Open, 5, Root, &ModelFile, model_filename, EFI_FILE_MODE_READ, 0);
-        if (EFI_ERROR(status)) {
-            Print(L"ERROR: Model file not found (expected stories110M.bin or stories15M.bin)\r\n");
-            return status;
+    CHAR16 *model_filename = NULL;
+    {
+        // Try larger models first when present. Keep the list small and explicit
+        // (UEFI shell users can rename the file to match one of these).
+        CHAR16 *candidates[] = {
+            L"stories300M.bin",
+            L"stories260M.bin",
+            L"stories200M.bin",
+            L"stories110M.bin",
+            L"stories15M.bin",
+            L"model.bin",
+        };
+        const int n_candidates = (int)(sizeof(candidates) / sizeof(candidates[0]));
+        EFI_STATUS last = EFI_NOT_FOUND;
+        for (int i = 0; i < n_candidates; i++) {
+            EFI_FILE_HANDLE f = 0;
+            EFI_STATUS st = uefi_call_wrapper(Root->Open, 5, Root, &f, candidates[i], EFI_FILE_MODE_READ, 0);
+            if (!EFI_ERROR(st)) {
+                ModelFile = f;
+                model_filename = candidates[i];
+                status = st;
+                break;
+            }
+            last = st;
+        }
+        if (model_filename == NULL) {
+            Print(L"ERROR: Model file not found. Expected one of: stories300M.bin stories260M.bin stories200M.bin stories110M.bin stories15M.bin model.bin\r\n");
+            return last;
         }
     }
     
@@ -774,7 +1062,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                     model_filename, config.dim, config.n_layers, config.n_heads, config.n_kv_heads, config.vocab_size, config.seq_len);
 
     // ========================================================================
-    // [3/7] Heap (auto-sized)
+    // [3/7] Kernel zones + heap (auto-sized)
     // ========================================================================
 
     int kv_dim = (config.dim * config.n_kv_heads) / config.n_heads;
@@ -832,14 +1120,83 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     heap_size = weights_bytes + state_bytes + tokenizer_bytes + slack_bytes;
     if (heap_size < 100ULL * 1024ULL * 1024ULL) heap_size = 100ULL * 1024ULL * 1024ULL;
 
-    Print(L"[3/7] Allocating heap (%d MB)...\r\n", (int)(heap_size / (1024 * 1024)));
-    status = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData, heap_size, &heap_base);
-    if (EFI_ERROR(status)) {
-        Print(L"ERROR: Heap allocation failed (need more RAM). Try QEMU -m 2048M for 110M.\r\n");
-        return status;
+    // Initialize LLM-Kernel Zone B arenas sized from the same accounting.
+    // This makes the REPL and the kernel work together: all big allocations go through zones/sentinel.
+    {
+        UINT64 zonec_bytes = 8ULL * 1024ULL * 1024ULL;
+        UINT64 scratch_bytes = 32ULL * 1024ULL * 1024ULL;
+
+        // KV cache lives in its own arena.
+        UINT64 kv_bytes = (UINT64)config.n_layers * (UINT64)config.seq_len * (UINT64)kv_dim * sizeof(float) * 2ULL;
+
+        UINT64 weights_u64 = (UINT64)weights_bytes;
+        UINT64 acts_u64 = (UINT64)(state_bytes - (UINTN)kv_bytes) + (UINT64)tokenizer_bytes + (UINT64)slack_bytes;
+
+        // Total Zone B includes all arenas.
+        UINT64 total = weights_u64 + kv_bytes + scratch_bytes + acts_u64 + zonec_bytes;
+        // Min 1GB for larger models; fallback to 768MB if allocation fails.
+        UINT64 min_total = (total > 768ULL * 1024ULL * 1024ULL) ? (1024ULL * 1024ULL * 1024ULL) : (768ULL * 1024ULL * 1024ULL);
+        if (total < min_total) total = min_total;
+
+        LlmkZonesConfig zcfg;
+        zcfg.total_bytes = total;
+        zcfg.weights_bytes = weights_u64;
+        zcfg.kv_bytes = kv_bytes;
+        zcfg.scratch_bytes = scratch_bytes;
+        zcfg.activations_bytes = acts_u64;
+        zcfg.zone_c_bytes = zonec_bytes;
+
+        Print(L"[3/7] Init kernel zones (%d MB)...\r\n", (int)(total / (1024 * 1024)));
+        status = llmk_zones_init(BS, &zcfg, &g_zones);
+        if (EFI_ERROR(status) && total > min_total) {
+            // If the computed size can't be allocated (e.g. low guest RAM / fragmentation),
+            // fall back to a smaller default so the REPL can still boot with smaller models.
+            Print(L"[llmk] zones alloc failed, retrying with %d MB...\r\n", (int)(min_total / (1024 * 1024)));
+            zcfg.total_bytes = min_total;
+            zcfg.weights_bytes = 0;
+            zcfg.kv_bytes = 0;
+            zcfg.scratch_bytes = 0;
+            zcfg.activations_bytes = 0;
+            zcfg.zone_c_bytes = 0;
+            status = llmk_zones_init(BS, &zcfg, &g_zones);
+        }
+        if (EFI_ERROR(status)) {
+            Print(L"ERROR: llmk_zones_init failed: %r\r\n", status);
+            return status;
+        }
+
+        // Init Zone C log (best-effort)
+        EFI_STATUS logst = llmk_log_init(&g_zones, &g_llmk_log);
+        if (EFI_ERROR(logst)) {
+            g_llmk_log.entries = 0;
+            g_llmk_log.capacity = 0;
+            g_llmk_log.write_idx = 0;
+        }
+
+        // Init sentinel
+        LlmkSentinelConfig scfg;
+        scfg.enabled = TRUE;
+        // REPL: keep allocation failures fatal, but keep budget overruns non-fatal.
+        // This lets us "activate budgets" without killing the whole session.
+        scfg.strict_mode = FALSE;
+        scfg.strict_alloc = TRUE;
+        scfg.strict_budget = FALSE;
+        scfg.max_cycles = 0;
+        scfg.max_cycles_prefill = 0;
+        scfg.max_cycles_decode = 0;
+        scfg.log_violations = TRUE;
+
+        status = llmk_sentinel_init(&g_sentinel, &g_zones, (g_llmk_log.capacity ? &g_llmk_log : 0), &scfg);
+        if (EFI_ERROR(status)) {
+            Print(L"ERROR: llmk_sentinel_init failed: %r\r\n", status);
+            return status;
+        }
+
+        g_llmk_ready = 1;
+        llmk_zones_print(&g_zones);
+        llmk_sentinel_print_status(&g_sentinel);
+        Print(L"OK: Kernel allocator ready\r\n\r\n");
     }
-    heap_offset = 0;
-    Print(L"OK: Heap ready\r\n\r\n");
     
     // ========================================================================
     // [4/7] Weight Pointers
@@ -847,7 +1204,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     
     Print(L"[4/7] Mapping weights...\r\n");
     bytes_to_read = weights_bytes;
-    float* weights_mem = (float*)simple_alloc(bytes_to_read);
+    float* weights_mem = (float*)llmk_alloc_weights((UINT64)bytes_to_read, L"weights");
     if (weights_mem == NULL) {
         Print(L"ERROR: Out of heap while allocating weights (%d MB needed)\r\n", (int)(bytes_to_read / (1024 * 1024)));
         return EFI_OUT_OF_RESOURCES;
@@ -922,8 +1279,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     state.v = (float*)simple_alloc(kv_dim * sizeof(float));
     state.att = (float*)simple_alloc(config.n_heads * config.seq_len * sizeof(float));
     state.logits = (float*)simple_alloc(config.vocab_size * sizeof(float));
-    state.key_cache = (float*)simple_alloc(config.n_layers * config.seq_len * kv_dim * sizeof(float));
-    state.value_cache = (float*)simple_alloc(config.n_layers * config.seq_len * kv_dim * sizeof(float));
+    state.key_cache = (float*)llmk_alloc_kv((UINT64)config.n_layers * (UINT64)config.seq_len * (UINT64)kv_dim * sizeof(float), L"key cache");
+    state.value_cache = (float*)llmk_alloc_kv((UINT64)config.n_layers * (UINT64)config.seq_len * (UINT64)kv_dim * sizeof(float), L"value cache");
     
     Print(L"OK: State buffers allocated\r\n\r\n");
     
@@ -1236,10 +1593,45 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         encode(prompt, prompt_tokens, &n_prompt_tokens, 256, &tokenizer);
         
         Print(L"AI: ");
+
+        if (g_llmk_ready) {
+            // Reset per-generation overrun counters and print current budget state.
+            g_budget_overruns_prefill = 0;
+            g_budget_overruns_decode = 0;
+            Print(L"\r\n[llmk][budget] prefill_max=%lu decode_max=%lu\r\n",
+                  g_budget_prefill_cycles, g_budget_decode_cycles);
+        }
         
         // Process prompt tokens through model first (prefill)
         for (int i = 0; i < n_prompt_tokens; i++) {
-            transformer_forward(&state, &weights, &config, prompt_tokens[i], i);
+            if (g_llmk_ready) {
+                // Per-token prefill budgeting (pos-dependent): set budget before each forward.
+                if (g_budget_prefill_cycles == 0) {
+                    // Start huge to ensure we get a first measurement without tripping.
+                    // llmk_budget_update() will snap down quickly after the first dt sample.
+                    g_budget_prefill_cycles = 100000000000ULL;
+                }
+                g_sentinel.cfg.max_cycles_prefill = g_budget_prefill_cycles;
+                llmk_sentinel_phase_start(&g_sentinel, LLMK_PHASE_PREFILL);
+                transformer_forward(&state, &weights, &config, prompt_tokens[i], i);
+                BOOLEAN ok = llmk_sentinel_phase_end(&g_sentinel);
+                if (g_sentinel.tripped) {
+                    Print(L"\r\n[llmk] prefill stopped (fail-safe) at i=%d\r\n", i);
+                    if (g_llmk_log.capacity) llmk_log_dump(&g_llmk_log, 16);
+                    break;
+                }
+                if (!ok) {
+                    // Non-fatal budget overrun: adapt budget upward and continue.
+                    g_budget_overruns_prefill++;
+                    if (g_budget_overruns_prefill <= 3) {
+                        Print(L"\r\n[llmk][budget] prefill overrun i=%d cycles=%lu max=%lu (auto-raise)\r\n",
+                              i, g_sentinel.last_dt_cycles, g_sentinel.last_budget_cycles);
+                    }
+                }
+                llmk_budget_update(&g_budget_prefill_cycles, g_sentinel.last_dt_cycles);
+            } else {
+                transformer_forward(&state, &weights, &config, prompt_tokens[i], i);
+            }
         }
         
         // Start generation from the last prompt token.
@@ -1251,6 +1643,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         int generated_count = 0;
         int repeat_count = 0;
         int last_token = -1;
+        int loop_escape_used = 0;
         
         // Track context for repetition penalty and loop detection.
         int context_tokens[256 + MAX_TOKENS];
@@ -1265,9 +1658,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         for (int i = 0; i < 64; i++) out_tail[i] = 0;
 
         unsigned long long gen_t0 = 0;
+        unsigned long long gen_wall0_us = 0;
+        int gen_have_wall = 0;
         if (stats_enabled) {
             calibrate_tsc_once();
             gen_t0 = rdtsc();
+            gen_have_wall = uefi_wall_us(&gen_wall0_us);
         }
 
         for (int step = 0; step < max_gen_tokens; step++) {
@@ -1283,7 +1679,24 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             int n_recent = n_context_tokens;
             if (n_recent > 64) n_recent = 64;
             int* recent = (n_recent > 0) ? &context_tokens[n_context_tokens - n_recent] : (int*)0;
-            next = sample_advanced(state.logits, config.vocab_size, temperature, min_p, top_p, top_k, recent, n_recent, repeat_penalty);
+
+            // One-time loop escape: if we detect a short repeating suffix, ban the sampled token once and resample.
+            for (int attempt = 0; attempt < 2; attempt++) {
+                next = sample_advanced(state.logits, config.vocab_size, temperature, min_p, top_p, top_k, recent, n_recent, repeat_penalty);
+                if (next == TOKEN_EOS || next == TOKEN_BOS) break;
+                if (!loop_escape_used && n_context_tokens + 1 < (int)(sizeof(context_tokens) / sizeof(context_tokens[0]))) {
+                    context_tokens[n_context_tokens] = next;
+                    int would_repeat = has_suffix_repeat(context_tokens, n_context_tokens + 1, 8) ||
+                                      has_suffix_repeat(context_tokens, n_context_tokens + 1, 12) ||
+                                      has_suffix_repeat(context_tokens, n_context_tokens + 1, 16);
+                    if (would_repeat) {
+                        loop_escape_used = 1;
+                        state.logits[next] = -1.0e9f;
+                        continue;
+                    }
+                }
+                break;
+            }
             
             // Check for EOS (some exports may still emit BOS; treat both as stop)
             if (next == TOKEN_EOS || next == TOKEN_BOS) break;
@@ -1364,19 +1777,79 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             token = next;
             pos++;
             if (pos >= config.seq_len) break;
-            transformer_forward(&state, &weights, &config, token, pos);
+
+            if (g_llmk_ready) {
+                if (g_budget_decode_cycles == 0) {
+                    g_budget_decode_cycles = 100000000000ULL;
+                }
+                g_sentinel.cfg.max_cycles_decode = g_budget_decode_cycles;
+                llmk_sentinel_phase_start(&g_sentinel, LLMK_PHASE_DECODE);
+                transformer_forward(&state, &weights, &config, token, pos);
+                BOOLEAN ok = llmk_sentinel_phase_end(&g_sentinel);
+                if (g_sentinel.tripped) {
+                    Print(L"\r\n[llmk] decode stopped (fail-safe) at step=%d pos=%d\r\n", step, pos);
+                    if (g_llmk_log.capacity) llmk_log_dump(&g_llmk_log, 16);
+                    break;
+                }
+                if (!ok) {
+                    g_budget_overruns_decode++;
+                    if (g_budget_overruns_decode <= 3) {
+                        Print(L"\r\n[llmk][budget] decode overrun step=%d pos=%d cycles=%lu max=%lu (auto-raise)\r\n",
+                              step, pos, g_sentinel.last_dt_cycles, g_sentinel.last_budget_cycles);
+                    }
+                }
+                llmk_budget_update(&g_budget_decode_cycles, g_sentinel.last_dt_cycles);
+            } else {
+                transformer_forward(&state, &weights, &config, token, pos);
+            }
+        }
+
+        if (g_llmk_ready) {
+            Print(L"\r\n[llmk][budget] final prefill_max=%lu decode_max=%lu overruns(p=%d d=%d)\r\n",
+                  g_budget_prefill_cycles,
+                  g_budget_decode_cycles,
+                  (int)g_budget_overruns_prefill,
+                  (int)g_budget_overruns_decode);
         }
 
         if (stats_enabled) {
             unsigned long long gen_t1 = rdtsc();
             unsigned long long dt = (gen_t1 > gen_t0) ? (gen_t1 - gen_t0) : 0;
+
+            // Prefer wall-clock timing when available (more stable under emulation).
+            if (gen_have_wall) {
+                unsigned long long gen_wall1_us = 0;
+                if (uefi_wall_us(&gen_wall1_us)) {
+                    unsigned long long wall_dt_us = (gen_wall1_us >= gen_wall0_us) ? (gen_wall1_us - gen_wall0_us)
+                                                                                   : (gen_wall1_us + 86400ULL * 1000000ULL - gen_wall0_us);
+                    unsigned long long ms = wall_dt_us / 1000ULL;
+                    if (wall_dt_us == 0) {
+                        Print(L"\r\n[stats] tokens=%d time_ms=%d tok_s=inf\r\n", generated_count, (int)ms);
+                    } else {
+                        unsigned long long tps_milli = ((unsigned long long)generated_count * 1000000ULL * 1000ULL) / wall_dt_us;
+                        unsigned long long tps_int = tps_milli / 1000ULL;
+                        unsigned long long tps_frac = tps_milli % 1000ULL;
+                        Print(L"\r\n[stats] tokens=%d time_ms=%d tok_s=%d.%03d\r\n",
+                              generated_count, (int)ms, (int)tps_int, (int)tps_frac);
+                    }
+                    goto stats_done;
+                }
+            }
+
+            // Fallback to TSC-based estimate.
             if (tsc_per_sec == 0 || dt == 0) {
                 Print(L"\r\n[stats] tokens=%d cycles=%d\r\n", generated_count, (int)dt);
             } else {
                 unsigned long long ms = (dt * 1000ULL) / tsc_per_sec;
-                unsigned long long tps = ((unsigned long long)generated_count * tsc_per_sec) / dt;
-                Print(L"\r\n[stats] tokens=%d time_ms=%d tok_s=%d\r\n", generated_count, (int)ms, (int)tps);
+                // milli tok/s for visibility even when < 1 tok/s
+                unsigned long long tps_milli = ((unsigned long long)generated_count * tsc_per_sec * 1000ULL) / dt;
+                unsigned long long tps_int = tps_milli / 1000ULL;
+                unsigned long long tps_frac = tps_milli % 1000ULL;
+                Print(L"\r\n[stats] tokens=%d time_ms=%d tok_s=%d.%03d\r\n",
+                      generated_count, (int)ms, (int)tps_int, (int)tps_frac);
             }
+stats_done:
+            ;
         }
         
         Print(L"\r\n\r\n");

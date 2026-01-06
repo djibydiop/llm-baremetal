@@ -360,6 +360,28 @@ static UINT64 g_budget_decode_cycles = 0;
 static UINT32 g_budget_overruns_prefill = 0;
 static UINT32 g_budget_overruns_decode = 0;
 
+static void llmk_reset_runtime_state(void) {
+    // Budgets
+    g_budget_prefill_cycles = 0;
+    g_budget_decode_cycles = 0;
+    g_budget_overruns_prefill = 0;
+    g_budget_overruns_decode = 0;
+
+    // Log (best-effort)
+    if (g_llmk_log.capacity) {
+        g_llmk_log.entries = 0;
+        g_llmk_log.write_idx = 0;
+    }
+
+    // Sentinel
+    g_sentinel.tripped = FALSE;
+    g_sentinel.last_error = LLMK_OK;
+    g_sentinel.last_reason[0] = 0;
+
+    // UTF-8 repair tail
+    uefi_print_utf8_flush();
+}
+
 static UINT64 llmk_u64_max(UINT64 a, UINT64 b) { return (a > b) ? a : b; }
 
 static void llmk_budget_update(UINT64 *budget, UINT64 last_dt) {
@@ -1495,7 +1517,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     Print(L"----------------------------------------\r\n");
     Print(L"  CHAT MODE ACTIVE\r\n");
     Print(L"  Type 'quit' or 'exit' to stop\r\n");
-    Print(L"  Commands: /temp /min_p /top_p /top_k /norepeat /repeat /max_tokens /seed /stats /stop_you /stop_nl /model /cpu /zones /help\r\n");
+    Print(L"  Commands: /temp /min_p /top_p /top_k /norepeat /repeat /max_tokens /seed /stats /stop_you /stop_nl /model /cpu /zones /ctx /log /reset /help\r\n");
     Print(L"----------------------------------------\r\n\r\n");
     
     // Sampling parameters
@@ -1729,6 +1751,58 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                     Print(L"  (llmk not ready)\r\n\r\n");
                 }
                 continue;
+            } else if (my_strncmp(prompt, "/ctx", 4) == 0) {
+                Print(L"\r\nContext:\r\n");
+                Print(L"  model=stories110M.bin\r\n");
+                Print(L"  dim=%d layers=%d heads=%d kv=%d vocab=%d seq=%d\r\n",
+                      config.dim, config.n_layers, config.n_heads, config.n_kv_heads, config.vocab_size, config.seq_len);
+                Print(L"Sampling:\r\n");
+                Print(L"  temp=%d.%02d min_p=%d.%02d top_p=%d.%02d top_k=%d\r\n",
+                      (int)temperature, (int)((temperature - (int)temperature) * 100.0f),
+                      (int)min_p, (int)((min_p - (int)min_p) * 100.0f),
+                      (int)top_p, (int)((top_p - (int)top_p) * 100.0f),
+                      top_k);
+                Print(L"  norepeat=%d repeat_penalty=%d.%02d max_tokens=%d\r\n",
+                      no_repeat_ngram,
+                      (int)repeat_penalty, (int)((repeat_penalty - (int)repeat_penalty) * 100.0f),
+                      max_gen_tokens);
+                if (g_llmk_ready) {
+                    Print(L"Budgets:\r\n");
+                    Print(L"  prefill_max=%lu decode_max=%lu overruns(p=%d d=%d)\r\n",
+                          g_budget_prefill_cycles, g_budget_decode_cycles,
+                          (int)g_budget_overruns_prefill, (int)g_budget_overruns_decode);
+                }
+                Print(L"\r\n");
+                continue;
+            } else if (my_strncmp(prompt, "/log", 4) == 0) {
+                UINT32 n = 16;
+                if (prompt[4] == ' ') {
+                    int i = 5;
+                    UINT32 val = 0;
+                    while (prompt[i] >= '0' && prompt[i] <= '9') {
+                        val = val * 10u + (UINT32)(prompt[i] - '0');
+                        i++;
+                    }
+                    if (val > 0) n = val;
+                    if (n > 128) n = 128;
+                }
+                Print(L"\r\nLog (last %d):\r\n", (int)n);
+                if (g_llmk_ready && g_llmk_log.capacity) {
+                    llmk_log_dump(&g_llmk_log, n);
+                } else {
+                    Print(L"  (log not available)\r\n");
+                }
+                Print(L"\r\n");
+                continue;
+            } else if (my_strncmp(prompt, "/reset", 6) == 0) {
+                Print(L"\r\nResetting runtime state...\r\n");
+                if (g_llmk_ready) {
+                    llmk_reset_runtime_state();
+                    Print(L"OK\r\n\r\n");
+                } else {
+                    Print(L"  (llmk not ready)\r\n\r\n");
+                }
+                continue;
             } else if (my_strncmp(prompt, "/help", 5) == 0) {
                 Print(L"\r\nCommands:\r\n");
                 Print(L"  /temp <val>   - Set temperature (0.0=greedy, 1.0=creative)\r\n");
@@ -1745,6 +1819,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 Print(L"  /model        - Show loaded model config\r\n");
                 Print(L"  /cpu          - Show CPU SIMD status\r\n");
                 Print(L"  /zones        - Dump allocator zones + sentinel\r\n");
+                Print(L"  /ctx          - Show model + sampling + budgets\r\n");
+                Print(L"  /log [n]      - Dump last n log entries\r\n");
+                Print(L"  /reset        - Clear budgets/log + untrip sentinel\r\n");
                 Print(L"  /help         - Show this help\r\n\r\n");
                 Print(L"Current settings:\r\n");
                 Print(L"  Temperature: ");

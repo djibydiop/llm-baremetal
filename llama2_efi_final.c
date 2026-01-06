@@ -47,6 +47,14 @@ float llmk_dot_f32_avx2(const float *a, const float *b, int n);
 void llmk_axpy_f32_avx2(float *dst, const float *src, float alpha, int n);
 
 static int g_attn_use_avx2 = 0;
+// -1=auto, 0=force SSE2, 1=force AVX2 (only allowed if auto-detected AVX2 is enabled)
+static int g_attn_force = -1;
+
+// One-shot fail-safe test harness.
+static int g_test_failsafe_active = 0;
+static BOOLEAN g_test_failsafe_prev_strict_budget = FALSE;
+static UINT64 g_test_failsafe_prev_prefill = 0;
+static UINT64 g_test_failsafe_prev_decode = 0;
 
 static void uefi_print_utf8_decode(const unsigned char *p, int len) {
     if (!p || len <= 0) return;
@@ -354,12 +362,18 @@ static inline void axpy_f32_sse2(float* dst, const float* src, float a, int n) {
 }
 
 static inline float dot_f32_best(const float* a, const float* b, int n) {
-    if (g_attn_use_avx2) return llmk_dot_f32_avx2(a, b, n);
+    int use_avx2 = g_attn_use_avx2;
+    if (g_attn_force == 0) use_avx2 = 0;
+    else if (g_attn_force == 1) use_avx2 = 1;
+    if (use_avx2) return llmk_dot_f32_avx2(a, b, n);
     return dot_f32_sse2(a, b, n);
 }
 
 static inline void axpy_f32_best(float* dst, const float* src, float a, int n) {
-    if (g_attn_use_avx2) { llmk_axpy_f32_avx2(dst, src, a, n); return; }
+    int use_avx2 = g_attn_use_avx2;
+    if (g_attn_force == 0) use_avx2 = 0;
+    else if (g_attn_force == 1) use_avx2 = 1;
+    if (use_avx2) { llmk_axpy_f32_avx2(dst, src, a, n); return; }
     axpy_f32_sse2(dst, src, a, n);
 }
 
@@ -1583,7 +1597,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     Print(L"----------------------------------------\r\n");
     Print(L"  CHAT MODE ACTIVE\r\n");
     Print(L"  Type 'quit' or 'exit' to stop\r\n");
-    Print(L"  Commands: /temp /min_p /top_p /top_k /norepeat /repeat /max_tokens /seed /stats /stop_you /stop_nl /model /cpu /zones /budget /ctx /log /reset /help\r\n");
+    Print(L"  Commands: /temp /min_p /top_p /top_k /norepeat /repeat /max_tokens /seed /stats /stop_you /stop_nl /model /cpu /zones /budget /attn /test_failsafe /ctx /log /reset /help\r\n");
     Print(L"----------------------------------------\r\n\r\n");
     
     // Sampling parameters
@@ -1805,7 +1819,10 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 Print(L"\r\nCPU features:\r\n");
                 Print(L"  sse2=%d avx=%d avx2=%d fma=%d\r\n", (int)f.has_sse2, (int)f.has_avx, (int)f.has_avx2, (int)f.has_fma);
                 Print(L"  djiblas_sgemm=%s\r\n", name);
-                Print(L"  attn_simd=%s\r\n\r\n", g_attn_use_avx2 ? L"AVX2" : L"SSE2");
+                const CHAR16 *attn = g_attn_use_avx2 ? L"AVX2" : L"SSE2";
+                if (g_attn_force == 0) attn = L"SSE2 (forced)";
+                else if (g_attn_force == 1) attn = L"AVX2 (forced)";
+                Print(L"  attn_simd=%s\r\n\r\n", attn);
                 continue;
             } else if (my_strncmp(prompt, "/zones", 6) == 0) {
                 Print(L"\r\nZones:\r\n");
@@ -1858,6 +1875,103 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 Print(L"  prefill_max=%lu\r\n", g_budget_prefill_cycles);
                 Print(L"  decode_max=%lu\r\n\r\n", g_budget_decode_cycles);
                 continue;
+            } else if (my_strncmp(prompt, "/attn", 5) == 0) {
+                // Usage:
+                //   /attn          -> show
+                //   /attn auto     -> runtime default
+                //   /attn sse2     -> force SSE2 path
+                //   /attn avx2     -> force AVX2 path (only if auto AVX2 is enabled)
+                int i = 5;
+                while (prompt[i] == ' ') i++;
+
+                if (prompt[i] == 0) {
+                    Print(L"\r\nAttention SIMD:\r\n");
+                    Print(L"  auto=%s\r\n", g_attn_use_avx2 ? L"AVX2" : L"SSE2");
+                    Print(L"  mode=%s\r\n\r\n",
+                          (g_attn_force == -1) ? L"auto" : (g_attn_force == 0 ? L"sse2 (forced)" : L"avx2 (forced)"));
+                    continue;
+                }
+
+                if (prompt[i] == 'a') {
+                    g_attn_force = -1;
+                    Print(L"\r\nOK: attn mode=auto\r\n\r\n");
+                    continue;
+                }
+                if (prompt[i] == 's') {
+                    g_attn_force = 0;
+                    Print(L"\r\nOK: attn mode=sse2 (forced)\r\n\r\n");
+                    continue;
+                }
+                if (prompt[i] == 'v') {
+                    if (!g_attn_use_avx2) {
+                        Print(L"\r\nERROR: AVX2 attention not available (auto is SSE2)\r\n\r\n");
+                        continue;
+                    }
+                    g_attn_force = 1;
+                    Print(L"\r\nOK: attn mode=avx2 (forced)\r\n\r\n");
+                    continue;
+                }
+
+                Print(L"\r\nUsage: /attn [auto|sse2|avx2]\r\n\r\n");
+                continue;
+            } else if (my_strncmp(prompt, "/test_failsafe", 14) == 0) {
+                // One-shot: temporarily enable strict budget and set tiny budgets so the next prompt trips.
+                // Usage:
+                //   /test_failsafe                -> decode trip with default cycles
+                //   /test_failsafe prefill [c]    -> trip during prefill
+                //   /test_failsafe decode [c]     -> trip during decode
+                //   /test_failsafe both [c]       -> either phase can trip
+                if (!g_llmk_ready) {
+                    Print(L"\r\n  (llmk not ready)\r\n\r\n");
+                    continue;
+                }
+
+                UINT64 cycles = 10000ULL;
+                int mode = 2; // 1=prefill, 2=decode, 3=both
+
+                int i = 14;
+                while (prompt[i] == ' ') i++;
+                if (prompt[i] == 'p') mode = 1;
+                else if (prompt[i] == 'd') mode = 2;
+                else if (prompt[i] == 'b') mode = 3;
+
+                // Skip word
+                while (prompt[i] && prompt[i] != ' ') i++;
+                while (prompt[i] == ' ') i++;
+
+                if (prompt[i] >= '0' && prompt[i] <= '9') {
+                    cycles = 0;
+                    while (prompt[i] >= '0' && prompt[i] <= '9') {
+                        cycles = cycles * 10ULL + (UINT64)(prompt[i] - '0');
+                        i++;
+                    }
+                }
+                if (cycles < 100ULL) cycles = 100ULL;
+
+                if (!g_test_failsafe_active) {
+                    g_test_failsafe_prev_strict_budget = g_sentinel.cfg.strict_budget;
+                    g_test_failsafe_prev_prefill = g_budget_prefill_cycles;
+                    g_test_failsafe_prev_decode = g_budget_decode_cycles;
+                }
+                g_test_failsafe_active = 1;
+                g_sentinel.cfg.strict_budget = TRUE;
+
+                const UINT64 huge = 100000000000ULL;
+                if (mode == 1) {
+                    g_budget_prefill_cycles = cycles;
+                    g_budget_decode_cycles = huge;
+                } else if (mode == 2) {
+                    g_budget_prefill_cycles = huge;
+                    g_budget_decode_cycles = cycles;
+                } else {
+                    g_budget_prefill_cycles = cycles;
+                    g_budget_decode_cycles = cycles;
+                }
+
+                Print(L"\r\n[test] fail-safe armed (strict_budget=1)\r\n");
+                Print(L"  prefill_max=%lu decode_max=%lu\r\n", g_budget_prefill_cycles, g_budget_decode_cycles);
+                Print(L"  Next prompt should trip and auto-dump ctx/zones/sentinel/log.\r\n\r\n");
+                continue;
             } else if (my_strncmp(prompt, "/ctx", 4) == 0) {
                 llmk_print_ctx(&config, temperature, min_p, top_p, top_k, no_repeat_ngram, repeat_penalty, max_gen_tokens);
                 continue;
@@ -1901,6 +2015,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 Print(L"  /cpu          - Show CPU SIMD status\r\n");
                 Print(L"  /zones        - Dump allocator zones + sentinel\r\n");
                 Print(L"  /budget [p] [d] - Set budgets in cycles (p=prefill, d=decode)\r\n");
+                Print(L"  /attn [auto|sse2|avx2] - Force attention SIMD path\r\n");
+                Print(L"  /test_failsafe [prefill|decode|both] [cycles] - One-shot strict budget trip\r\n");
                 Print(L"  /ctx          - Show model + sampling + budgets\r\n");
                 Print(L"  /log [n]      - Dump last n log entries\r\n");
                 Print(L"  /reset        - Clear budgets/log + untrip sentinel\r\n");
@@ -1976,6 +2092,13 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                     llmk_zones_print(&g_zones);
                     llmk_sentinel_print_status(&g_sentinel);
                     llmk_print_log(32);
+                    if (g_test_failsafe_active) {
+                        g_sentinel.cfg.strict_budget = g_test_failsafe_prev_strict_budget;
+                        g_budget_prefill_cycles = g_test_failsafe_prev_prefill;
+                        g_budget_decode_cycles = g_test_failsafe_prev_decode;
+                        g_test_failsafe_active = 0;
+                        Print(L"[test] fail-safe test complete (restored)\r\n");
+                    }
                     break;
                 }
                 if (!ok) {
@@ -2143,6 +2266,13 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                     llmk_zones_print(&g_zones);
                     llmk_sentinel_print_status(&g_sentinel);
                     llmk_print_log(32);
+                    if (g_test_failsafe_active) {
+                        g_sentinel.cfg.strict_budget = g_test_failsafe_prev_strict_budget;
+                        g_budget_prefill_cycles = g_test_failsafe_prev_prefill;
+                        g_budget_decode_cycles = g_test_failsafe_prev_decode;
+                        g_test_failsafe_active = 0;
+                        Print(L"[test] fail-safe test complete (restored)\r\n");
+                    }
                     break;
                 }
                 if (!ok) {
@@ -2160,6 +2290,14 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
 
         // Flush any pending bytes held for mojibake repair across token boundaries.
         uefi_print_utf8_flush();
+
+        if (g_test_failsafe_active) {
+            g_sentinel.cfg.strict_budget = g_test_failsafe_prev_strict_budget;
+            g_budget_prefill_cycles = g_test_failsafe_prev_prefill;
+            g_budget_decode_cycles = g_test_failsafe_prev_decode;
+            g_test_failsafe_active = 0;
+            Print(L"\r\n[test] fail-safe test cancelled (no trip; restored)\r\n");
+        }
 
         if (g_llmk_ready) {
             Print(L"\r\n[llmk][budget] final prefill_max=%lu decode_max=%lu overruns(p=%d d=%d)\r\n",

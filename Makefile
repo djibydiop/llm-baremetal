@@ -88,7 +88,7 @@ djiblas_avx2.o: djiblas_avx2.c djiblas.h
 	$(CC) $(CFLAGS) -mavx2 -mfma -c djiblas_avx2.c -o djiblas_avx2.o
 
 attention_avx2.o: attention_avx2.c
-	$(CC) $(CFLAGS) -mavx2 -c attention_avx2.c -o attention_avx2.o
+	$(CC) $(CFLAGS) -mavx2 -mfma -c attention_avx2.c -o attention_avx2.o
 
 $(KERNEL_SO): $(KERNEL_OBJS)
 	ld $(LDFLAGS) $(KERNEL_OBJS) -o $(KERNEL_SO) $(LIBS)

@@ -1583,7 +1583,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     Print(L"----------------------------------------\r\n");
     Print(L"  CHAT MODE ACTIVE\r\n");
     Print(L"  Type 'quit' or 'exit' to stop\r\n");
-    Print(L"  Commands: /temp /min_p /top_p /top_k /norepeat /repeat /max_tokens /seed /stats /stop_you /stop_nl /model /cpu /zones /ctx /log /reset /help\r\n");
+    Print(L"  Commands: /temp /min_p /top_p /top_k /norepeat /repeat /max_tokens /seed /stats /stop_you /stop_nl /model /cpu /zones /budget /ctx /log /reset /help\r\n");
     Print(L"----------------------------------------\r\n\r\n");
     
     // Sampling parameters
@@ -1817,6 +1817,47 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                     Print(L"  (llmk not ready)\r\n\r\n");
                 }
                 continue;
+            } else if (my_strncmp(prompt, "/budget", 7) == 0) {
+                if (!g_llmk_ready) {
+                    Print(L"\r\n  (llmk not ready)\r\n\r\n");
+                    continue;
+                }
+
+                // Usage:
+                //   /budget                 -> show
+                //   /budget <p>             -> set both prefill+decode
+                //   /budget <p> <d>         -> set separately
+                int i = 7;
+                while (prompt[i] == ' ') i++;
+                if (prompt[i] == 0) {
+                    Print(L"\r\nBudgets (cycles):\r\n");
+                    Print(L"  prefill_max=%lu\r\n", g_budget_prefill_cycles);
+                    Print(L"  decode_max=%lu\r\n\r\n", g_budget_decode_cycles);
+                    continue;
+                }
+
+                UINT64 pre = 0;
+                UINT64 dec = 0;
+                while (prompt[i] >= '0' && prompt[i] <= '9') {
+                    pre = pre * 10ULL + (UINT64)(prompt[i] - '0');
+                    i++;
+                }
+                while (prompt[i] == ' ') i++;
+                if (prompt[i] == 0) {
+                    dec = pre;
+                } else {
+                    while (prompt[i] >= '0' && prompt[i] <= '9') {
+                        dec = dec * 10ULL + (UINT64)(prompt[i] - '0');
+                        i++;
+                    }
+                }
+
+                g_budget_prefill_cycles = pre;
+                g_budget_decode_cycles = dec;
+                Print(L"\r\nBudgets set (cycles):\r\n");
+                Print(L"  prefill_max=%lu\r\n", g_budget_prefill_cycles);
+                Print(L"  decode_max=%lu\r\n\r\n", g_budget_decode_cycles);
+                continue;
             } else if (my_strncmp(prompt, "/ctx", 4) == 0) {
                 llmk_print_ctx(&config, temperature, min_p, top_p, top_k, no_repeat_ngram, repeat_penalty, max_gen_tokens);
                 continue;
@@ -1859,6 +1900,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 Print(L"  /model        - Show loaded model config\r\n");
                 Print(L"  /cpu          - Show CPU SIMD status\r\n");
                 Print(L"  /zones        - Dump allocator zones + sentinel\r\n");
+                Print(L"  /budget [p] [d] - Set budgets in cycles (p=prefill, d=decode)\r\n");
                 Print(L"  /ctx          - Show model + sampling + budgets\r\n");
                 Print(L"  /log [n]      - Dump last n log entries\r\n");
                 Print(L"  /reset        - Clear budgets/log + untrip sentinel\r\n");

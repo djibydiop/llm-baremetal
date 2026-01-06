@@ -48,6 +48,169 @@ void llmk_axpy_f32_avx2(float *dst, const float *src, float alpha, int n);
 
 static int g_attn_use_avx2 = 0;
 
+static void uefi_print_utf8_decode(const unsigned char *p, int len) {
+    if (!p || len <= 0) return;
+
+    // Convert UTF-8 bytes to UTF-16 and stream to the UEFI console.
+    // Uses U+FFFD replacement on invalid sequences.
+    CHAR16 out[256];
+    int out_len = 0;
+
+    int i = 0;
+    while (i < len) {
+        UINT32 cp = 0xFFFD;
+        unsigned char b0 = p[i];
+
+        if (b0 < 0x80) {
+            cp = (UINT32)b0;
+            i += 1;
+        } else if ((b0 & 0xE0) == 0xC0) {
+            if (i + 1 < len) {
+                unsigned char b1 = p[i + 1];
+                if ((b1 & 0xC0) == 0x80) {
+                    cp = ((UINT32)(b0 & 0x1F) << 6) | (UINT32)(b1 & 0x3F);
+                    if (cp < 0x80) cp = 0xFFFD;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            } else {
+                i += 1;
+            }
+        } else if ((b0 & 0xF0) == 0xE0) {
+            if (i + 2 < len) {
+                unsigned char b1 = p[i + 1];
+                unsigned char b2 = p[i + 2];
+                if (((b1 & 0xC0) == 0x80) && ((b2 & 0xC0) == 0x80)) {
+                    cp = ((UINT32)(b0 & 0x0F) << 12) | ((UINT32)(b1 & 0x3F) << 6) | (UINT32)(b2 & 0x3F);
+                    if (cp < 0x800 || (cp >= 0xD800 && cp <= 0xDFFF)) cp = 0xFFFD;
+                    i += 3;
+                } else {
+                    i += 1;
+                }
+            } else {
+                i += 1;
+            }
+        } else if ((b0 & 0xF8) == 0xF0) {
+            if (i + 3 < len) {
+                unsigned char b1 = p[i + 1];
+                unsigned char b2 = p[i + 2];
+                unsigned char b3 = p[i + 3];
+                if (((b1 & 0xC0) == 0x80) && ((b2 & 0xC0) == 0x80) && ((b3 & 0xC0) == 0x80)) {
+                    cp = ((UINT32)(b0 & 0x07) << 18) | ((UINT32)(b1 & 0x3F) << 12) | ((UINT32)(b2 & 0x3F) << 6) | (UINT32)(b3 & 0x3F);
+                    if (cp < 0x10000 || cp > 0x10FFFF) cp = 0xFFFD;
+                    i += 4;
+                } else {
+                    i += 1;
+                }
+            } else {
+                i += 1;
+            }
+        } else {
+            i += 1;
+        }
+
+        if (out_len > (int)(sizeof(out) / sizeof(out[0])) - 3) {
+            out[out_len] = 0;
+            uefi_call_wrapper(ST->ConOut->OutputString, 2, ST->ConOut, out);
+            out_len = 0;
+        }
+
+        if (cp <= 0xFFFF) {
+            out[out_len++] = (CHAR16)cp;
+        } else {
+            cp -= 0x10000;
+            out[out_len++] = (CHAR16)(0xD800 + (cp >> 10));
+            out[out_len++] = (CHAR16)(0xDC00 + (cp & 0x3FF));
+        }
+    }
+
+    if (out_len > 0) {
+        out[out_len] = 0;
+        uefi_call_wrapper(ST->ConOut->OutputString, 2, ST->ConOut, out);
+    }
+}
+
+// Some generations still contain the classic mojibake sequence "ÔÇÖ" for U+2019.
+// This can span token boundaries, so keep a small byte tail and repair across calls.
+static unsigned char g_utf8_repair_tail[5];
+static int g_utf8_repair_tail_len = 0;
+
+static void uefi_print_utf8_bytes(const char *bytes, int len) {
+    if (!bytes || len <= 0) return;
+
+    // Pattern: UTF-8("ÔÇÖ") = C3 94 C3 87 C3 96, replace with UTF-8("’") = E2 80 99.
+    const unsigned char pat[6] = { 0xC3, 0x94, 0xC3, 0x87, 0xC3, 0x96 };
+    const unsigned char rep[3] = { 0xE2, 0x80, 0x99 };
+
+    const int keep = 5; // pat_len - 1
+    unsigned char inbuf[512];
+    unsigned char outbuf[512];
+
+    int offset = 0;
+    while (offset < len) {
+        int inlen = 0;
+        for (int i = 0; i < g_utf8_repair_tail_len && inlen < (int)sizeof(inbuf); i++) {
+            inbuf[inlen++] = g_utf8_repair_tail[i];
+        }
+
+        int cap = (int)sizeof(inbuf) - inlen;
+        int take = len - offset;
+        if (take > cap) take = cap;
+        for (int i = 0; i < take; i++) {
+            inbuf[inlen++] = (unsigned char)bytes[offset + i];
+        }
+        offset += take;
+
+        if (inlen <= 0) return;
+
+        if (inlen <= keep) {
+            g_utf8_repair_tail_len = inlen;
+            for (int i = 0; i < inlen; i++) g_utf8_repair_tail[i] = inbuf[i];
+            continue;
+        }
+
+        int upto = inlen - keep;
+        int outlen = 0;
+        int j = 0;
+        while (j < upto && outlen < (int)sizeof(outbuf)) {
+            if (j + 6 <= upto &&
+                inbuf[j + 0] == pat[0] && inbuf[j + 1] == pat[1] && inbuf[j + 2] == pat[2] &&
+                inbuf[j + 3] == pat[3] && inbuf[j + 4] == pat[4] && inbuf[j + 5] == pat[5]) {
+                if (outlen + 3 <= (int)sizeof(outbuf)) {
+                    outbuf[outlen++] = rep[0];
+                    outbuf[outlen++] = rep[1];
+                    outbuf[outlen++] = rep[2];
+                }
+                j += 6;
+                continue;
+            }
+            outbuf[outlen++] = inbuf[j++];
+        }
+
+        // Save tail for boundary-spanning repair.
+        g_utf8_repair_tail_len = keep;
+        for (int i = 0; i < keep; i++) g_utf8_repair_tail[i] = inbuf[upto + i];
+
+        // Decode+print processed bytes.
+        uefi_print_utf8_decode(outbuf, outlen);
+
+        // If we ever filled the buffer before consuming all of upto, drop the remainder to avoid
+        // stalling. This should be extremely rare with typical tokenizer pieces.
+        // (We intentionally keep this minimal and avoid heap allocations.)
+        if (j < upto) {
+            // best-effort: continue printing remaining bytes directly (no repair inside this chunk)
+            uefi_print_utf8_decode(inbuf + j, upto - j);
+        }
+    }
+}
+
+static void uefi_print_utf8_flush(void) {
+    if (g_utf8_repair_tail_len <= 0) return;
+    uefi_print_utf8_decode(g_utf8_repair_tail, g_utf8_repair_tail_len);
+    g_utf8_repair_tail_len = 0;
+}
+
 // Best-effort: enable AVX state (OSXSAVE + XCR0) in UEFI so AVX/AVX2 code can run.
 // Without an OS, some firmwares leave XCR0 unset; QEMU/OVMF often does.
 static inline void cpuidex_u32(UINT32 leaf, UINT32 subleaf, UINT32 *eax, UINT32 *ebx, UINT32 *ecx, UINT32 *edx) {
@@ -1332,7 +1495,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     Print(L"----------------------------------------\r\n");
     Print(L"  CHAT MODE ACTIVE\r\n");
     Print(L"  Type 'quit' or 'exit' to stop\r\n");
-    Print(L"  Commands: /temp /min_p /top_p /top_k /norepeat /repeat /max_tokens /seed /stats /stop_you /stop_nl /help\r\n");
+    Print(L"  Commands: /temp /min_p /top_p /top_k /norepeat /repeat /max_tokens /seed /stats /stop_you /stop_nl /model /cpu /zones /help\r\n");
     Print(L"----------------------------------------\r\n\r\n");
     
     // Sampling parameters
@@ -1536,6 +1699,36 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 Print(L"%d.", (int)repeat_penalty);
                 Print(L"%d\r\n", (int)((repeat_penalty - (int)repeat_penalty) * 100.0f));
                 continue;
+            } else if (my_strncmp(prompt, "/model", 6) == 0) {
+                Print(L"\r\nModel:\r\n");
+                Print(L"  stories110M.bin\r\n");
+                Print(L"Config:\r\n");
+                Print(L"  dim=%d layers=%d heads=%d kv=%d vocab=%d seq=%d\r\n\r\n",
+                      config.dim, config.n_layers, config.n_heads, config.n_kv_heads, config.vocab_size, config.seq_len);
+                continue;
+            } else if (my_strncmp(prompt, "/cpu", 4) == 0) {
+                CPUFeatures f;
+                djiblas_detect_cpu(&f);
+                sgemm_kernel_t k = djiblas_get_best_kernel(&f);
+                const CHAR16 *name = L"SCALAR";
+                if (k == djiblas_sgemm_avx512) name = L"AVX512";
+                else if (k == djiblas_sgemm_avx2) name = (f.has_fma ? L"AVX2+FMA" : L"AVX2");
+                else if (k == djiblas_sgemm_sse2) name = L"SSE2";
+                Print(L"\r\nCPU features:\r\n");
+                Print(L"  sse2=%d avx=%d avx2=%d fma=%d\r\n", (int)f.has_sse2, (int)f.has_avx, (int)f.has_avx2, (int)f.has_fma);
+                Print(L"  djiblas_sgemm=%s\r\n", name);
+                Print(L"  attn_simd=%s\r\n\r\n", g_attn_use_avx2 ? L"AVX2" : L"SSE2");
+                continue;
+            } else if (my_strncmp(prompt, "/zones", 6) == 0) {
+                Print(L"\r\nZones:\r\n");
+                if (g_llmk_ready) {
+                    llmk_zones_print(&g_zones);
+                    llmk_sentinel_print_status(&g_sentinel);
+                    Print(L"\r\n");
+                } else {
+                    Print(L"  (llmk not ready)\r\n\r\n");
+                }
+                continue;
             } else if (my_strncmp(prompt, "/help", 5) == 0) {
                 Print(L"\r\nCommands:\r\n");
                 Print(L"  /temp <val>   - Set temperature (0.0=greedy, 1.0=creative)\r\n");
@@ -1549,6 +1742,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 Print(L"  /stop_you <0|1> - Stop on \\nYou: pattern\r\n");
                 Print(L"  /stop_nl <0|1>  - Stop on double newline\r\n");
                 Print(L"  /repeat <val> - Set repetition penalty (1.0=none, 1.5=strong)\r\n");
+                Print(L"  /model        - Show loaded model config\r\n");
+                Print(L"  /cpu          - Show CPU SIMD status\r\n");
+                Print(L"  /zones        - Dump allocator zones + sentinel\r\n");
                 Print(L"  /help         - Show this help\r\n\r\n");
                 Print(L"Current settings:\r\n");
                 Print(L"  Temperature: ");
@@ -1715,14 +1911,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 char* piece = tokenizer.vocab[next];
                 int len = my_strlen(piece);
                 if (len > 0) {
-                    CHAR16 wpiece[256];
-                    int copy_len = len;
-                    if (copy_len > 255) copy_len = 255;
-                    for (int i = 0; i < copy_len; i++) {
-                        wpiece[i] = (CHAR16)piece[i];
-                    }
-                    wpiece[copy_len] = 0;
-                    Print(L"%s", wpiece);
+                    uefi_print_utf8_bytes(piece, len);
                     generated_count++;
 
                     // Update ASCII tail buffer for stop detection.
@@ -1803,6 +1992,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 transformer_forward(&state, &weights, &config, token, pos);
             }
         }
+
+        // Flush any pending bytes held for mojibake repair across token boundaries.
+        uefi_print_utf8_flush();
 
         if (g_llmk_ready) {
             Print(L"\r\n[llmk][budget] final prefill_max=%lu decode_max=%lu overruns(p=%d d=%d)\r\n",

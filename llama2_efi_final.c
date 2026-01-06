@@ -139,9 +139,25 @@ static int g_utf8_repair_tail_len = 0;
 static void uefi_print_utf8_bytes(const char *bytes, int len) {
     if (!bytes || len <= 0) return;
 
-    // Pattern: UTF-8("ÔÇÖ") = C3 94 C3 87 C3 96, replace with UTF-8("’") = E2 80 99.
-    const unsigned char pat[6] = { 0xC3, 0x94, 0xC3, 0x87, 0xC3, 0x96 };
-    const unsigned char rep[3] = { 0xE2, 0x80, 0x99 };
+    typedef struct {
+        unsigned char pat[6];
+        unsigned char rep[3];
+    } Mojimap;
+
+    // Common mojibake seen in generations (CP437-ish smart punctuation).
+    // Each pat is UTF-8 for the visible mojibake string; rep is UTF-8 for the intended punctuation.
+    static const Mojimap maps[] = {
+        // ÔÇÖ -> ’
+        { { 0xC3, 0x94, 0xC3, 0x87, 0xC3, 0x96 }, { 0xE2, 0x80, 0x99 } },
+        // ÔÇ£ -> “
+        { { 0xC3, 0x94, 0xC3, 0x87, 0xC2, 0xA3 }, { 0xE2, 0x80, 0x9C } },
+        // ÔÇØ -> ”
+        { { 0xC3, 0x94, 0xC3, 0x87, 0xC3, 0x98 }, { 0xE2, 0x80, 0x9D } },
+        // ÔÇö -> —
+        { { 0xC3, 0x94, 0xC3, 0x87, 0xC3, 0xB6 }, { 0xE2, 0x80, 0x94 } },
+        // ÔÇª -> …
+        { { 0xC3, 0x94, 0xC3, 0x87, 0xC2, 0xAA }, { 0xE2, 0x80, 0xA6 } },
+    };
 
     const int keep = 5; // pat_len - 1
     unsigned char inbuf[512];
@@ -174,17 +190,24 @@ static void uefi_print_utf8_bytes(const char *bytes, int len) {
         int outlen = 0;
         int j = 0;
         while (j < upto && outlen < (int)sizeof(outbuf)) {
-            if (j + 6 <= upto &&
-                inbuf[j + 0] == pat[0] && inbuf[j + 1] == pat[1] && inbuf[j + 2] == pat[2] &&
-                inbuf[j + 3] == pat[3] && inbuf[j + 4] == pat[4] && inbuf[j + 5] == pat[5]) {
-                if (outlen + 3 <= (int)sizeof(outbuf)) {
-                    outbuf[outlen++] = rep[0];
-                    outbuf[outlen++] = rep[1];
-                    outbuf[outlen++] = rep[2];
+            int matched = 0;
+            if (j + 6 <= upto) {
+                for (UINTN m = 0; m < (sizeof(maps) / sizeof(maps[0])); m++) {
+                    const Mojimap *mm = &maps[m];
+                    if (inbuf[j + 0] == mm->pat[0] && inbuf[j + 1] == mm->pat[1] && inbuf[j + 2] == mm->pat[2] &&
+                        inbuf[j + 3] == mm->pat[3] && inbuf[j + 4] == mm->pat[4] && inbuf[j + 5] == mm->pat[5]) {
+                        if (outlen + 3 <= (int)sizeof(outbuf)) {
+                            outbuf[outlen++] = mm->rep[0];
+                            outbuf[outlen++] = mm->rep[1];
+                            outbuf[outlen++] = mm->rep[2];
+                        }
+                        j += 6;
+                        matched = 1;
+                        break;
+                    }
                 }
-                j += 6;
-                continue;
             }
+            if (matched) continue;
             outbuf[outlen++] = inbuf[j++];
         }
 
@@ -619,6 +642,49 @@ typedef struct {
     int vocab_size;
     int seq_len;
 } Config;
+
+static void llmk_print_ctx(const Config *config,
+                           float temperature,
+                           float min_p,
+                           float top_p,
+                           int top_k,
+                           int no_repeat_ngram,
+                           float repeat_penalty,
+                           int max_gen_tokens) {
+    Print(L"\r\nContext:\r\n");
+    Print(L"  model=stories110M.bin\r\n");
+    Print(L"  dim=%d layers=%d heads=%d kv=%d vocab=%d seq=%d\r\n",
+          config->dim, config->n_layers, config->n_heads, config->n_kv_heads, config->vocab_size, config->seq_len);
+    Print(L"Sampling:\r\n");
+    Print(L"  temp=%d.%02d min_p=%d.%02d top_p=%d.%02d top_k=%d\r\n",
+          (int)temperature, (int)((temperature - (int)temperature) * 100.0f),
+          (int)min_p, (int)((min_p - (int)min_p) * 100.0f),
+          (int)top_p, (int)((top_p - (int)top_p) * 100.0f),
+          top_k);
+    Print(L"  norepeat=%d repeat_penalty=%d.%02d max_tokens=%d\r\n",
+          no_repeat_ngram,
+          (int)repeat_penalty, (int)((repeat_penalty - (int)repeat_penalty) * 100.0f),
+          max_gen_tokens);
+    if (g_llmk_ready) {
+        Print(L"Budgets:\r\n");
+        Print(L"  prefill_max=%lu decode_max=%lu overruns(p=%d d=%d)\r\n",
+              g_budget_prefill_cycles, g_budget_decode_cycles,
+              (int)g_budget_overruns_prefill, (int)g_budget_overruns_decode);
+    }
+    Print(L"\r\n");
+}
+
+static void llmk_print_log(UINT32 n) {
+    if (n == 0) n = 16;
+    if (n > 128) n = 128;
+    Print(L"\r\nLog (last %d):\r\n", (int)n);
+    if (g_llmk_ready && g_llmk_log.capacity) {
+        llmk_log_dump(&g_llmk_log, n);
+    } else {
+        Print(L"  (log not available)\r\n");
+    }
+    Print(L"\r\n");
+}
 
 typedef struct {
     float* token_embedding_table;
@@ -1752,27 +1818,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 }
                 continue;
             } else if (my_strncmp(prompt, "/ctx", 4) == 0) {
-                Print(L"\r\nContext:\r\n");
-                Print(L"  model=stories110M.bin\r\n");
-                Print(L"  dim=%d layers=%d heads=%d kv=%d vocab=%d seq=%d\r\n",
-                      config.dim, config.n_layers, config.n_heads, config.n_kv_heads, config.vocab_size, config.seq_len);
-                Print(L"Sampling:\r\n");
-                Print(L"  temp=%d.%02d min_p=%d.%02d top_p=%d.%02d top_k=%d\r\n",
-                      (int)temperature, (int)((temperature - (int)temperature) * 100.0f),
-                      (int)min_p, (int)((min_p - (int)min_p) * 100.0f),
-                      (int)top_p, (int)((top_p - (int)top_p) * 100.0f),
-                      top_k);
-                Print(L"  norepeat=%d repeat_penalty=%d.%02d max_tokens=%d\r\n",
-                      no_repeat_ngram,
-                      (int)repeat_penalty, (int)((repeat_penalty - (int)repeat_penalty) * 100.0f),
-                      max_gen_tokens);
-                if (g_llmk_ready) {
-                    Print(L"Budgets:\r\n");
-                    Print(L"  prefill_max=%lu decode_max=%lu overruns(p=%d d=%d)\r\n",
-                          g_budget_prefill_cycles, g_budget_decode_cycles,
-                          (int)g_budget_overruns_prefill, (int)g_budget_overruns_decode);
-                }
-                Print(L"\r\n");
+                llmk_print_ctx(&config, temperature, min_p, top_p, top_k, no_repeat_ngram, repeat_penalty, max_gen_tokens);
                 continue;
             } else if (my_strncmp(prompt, "/log", 4) == 0) {
                 UINT32 n = 16;
@@ -1786,13 +1832,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                     if (val > 0) n = val;
                     if (n > 128) n = 128;
                 }
-                Print(L"\r\nLog (last %d):\r\n", (int)n);
-                if (g_llmk_ready && g_llmk_log.capacity) {
-                    llmk_log_dump(&g_llmk_log, n);
-                } else {
-                    Print(L"  (log not available)\r\n");
-                }
-                Print(L"\r\n");
+                llmk_print_log(n);
                 continue;
             } else if (my_strncmp(prompt, "/reset", 6) == 0) {
                 Print(L"\r\nResetting runtime state...\r\n");
@@ -1890,7 +1930,10 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 BOOLEAN ok = llmk_sentinel_phase_end(&g_sentinel);
                 if (g_sentinel.tripped) {
                     Print(L"\r\n[llmk] prefill stopped (fail-safe) at i=%d\r\n", i);
-                    if (g_llmk_log.capacity) llmk_log_dump(&g_llmk_log, 16);
+                    llmk_print_ctx(&config, temperature, min_p, top_p, top_k, no_repeat_ngram, repeat_penalty, max_gen_tokens);
+                    llmk_zones_print(&g_zones);
+                    llmk_sentinel_print_status(&g_sentinel);
+                    llmk_print_log(32);
                     break;
                 }
                 if (!ok) {
@@ -2054,7 +2097,10 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 BOOLEAN ok = llmk_sentinel_phase_end(&g_sentinel);
                 if (g_sentinel.tripped) {
                     Print(L"\r\n[llmk] decode stopped (fail-safe) at step=%d pos=%d\r\n", step, pos);
-                    if (g_llmk_log.capacity) llmk_log_dump(&g_llmk_log, 16);
+                    llmk_print_ctx(&config, temperature, min_p, top_p, top_k, no_repeat_ngram, repeat_penalty, max_gen_tokens);
+                    llmk_zones_print(&g_zones);
+                    llmk_sentinel_print_status(&g_sentinel);
+                    llmk_print_log(32);
                     break;
                 }
                 if (!ok) {

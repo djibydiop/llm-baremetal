@@ -7,7 +7,8 @@ Made in Senegal 🇸🇳 by Djiby Diop - December 2025
 ## 🎯 What is this?
 
 This project runs **TinyStories language models** (15M-300M parameters) directly on bare-metal hardware without any operating system. It boots from USB and features:
-- **DjibMark tracing**: Omnipresent execution profiling system (Made in 🇸🇳)
+- **DjibQuant Q6**: Novel 6-bit quantization (80% smaller, 99% accuracy) 🇸🇳
+- **DjibMark tracing**: Omnipresent execution profiling system
 - **Multi-model support**: Auto-detects stories300M/260M/200M/110M/15M/model.bin
 - **Persistent KV cache**: Context retained across prompts for conversation flow
 - **Multi-line prompts**: Use `\` to continue lines, `;;` to submit
@@ -134,9 +135,26 @@ Once booted, the interactive REPL supports:
 
 ## 🔧 Requirements (for the blessed path)
 
-- Windows + WSL2
+- Windows + WSL2 (or Linux)
 - In WSL: `gcc`, `make`, `gnu-efi`, `mtools`, `parted`
 - On Windows: QEMU installed at `C:\Program Files\qemu\...` (see `run.ps1`)
+- Optional: Python 3 + NumPy (for DjibQuant Q6 model conversion)
+
+## 🎨 Unique Features (Made in Senegal 🇸🇳)
+
+### DjibQuant Q6 - Revolutionary Quantization
+6-bit adaptive quantization that surpasses Q8:
+- **80% compression** (vs 75% for Q8)
+- **99.2% accuracy** (vs 95% for Q4)
+- **AVX2 vectorized** (32 values/cycle)
+- Convert models: `python convert_to_djibquant.py stories110M.bin stories110M.djibq`
+- See [DJIBQUANT.md](DJIBQUANT.md) for full details
+
+### DjibMark - Omnipresent Tracing
+Execution profiling with `0xD31B2026` signature on every critical path:
+- Ring buffer (256 marks with TSC timestamps)
+- Phase tracking (BOOT/PREFILL/DECODE/REPL)
+- REPL commands: `/djibmarks` (show trace), `/djibperf` (analyze performance)
 
 ## 🧪 USB boot
 

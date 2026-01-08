@@ -33,6 +33,9 @@ OVMF.fd
 qemu*.txt
 DIAGNOSTIC.md
 
+# Local REPL config (publish repl.cfg.example instead)
+repl.cfg
+
 # Local archived artifacts
 artifacts/
 

@@ -1,0 +1,30 @@
+# repl.cfg.example - Optional REPL defaults
+# Copy this file to repl.cfg and adjust values for your hardware.
+# The build script will auto-include repl.cfg in the boot image if present.
+
+# Sampling parameters
+temperature=0.75        # 0.0=greedy, 1.0=creative
+min_p=0.05              # Min probability threshold (0.0-1.0)
+top_p=0.95              # Nucleus sampling (0.0-1.0)
+top_k=80                # Top-k sampling (0=off, typical 40-200)
+
+repeat_penalty=1.15     # Repetition penalty (1.0=none, 1.5=strong)
+no_repeat_ngram=4       # No-repeat ngram (0=off, typical 3-6)
+max_tokens=160          # Max generation tokens (1-256)
+
+# UI/output settings
+stats=1                 # Print generation stats (0=off, 1=on)
+stop_you=1              # Stop on \nYou: pattern (0=off, 1=on)
+stop_nl=0               # Stop on double newline (0=off, 1=on)
+
+# Performance/diagnostics
+attn=auto               # Attention SIMD (auto|sse2|avx2)
+strict_budget=0         # Hard-stop on budget overrun (0=log only, 1=trip sentinel)
+
+# Cycle budgets (tune per machine; higher = more tolerance, lower = earlier overrun detect)
+# Start conservative and adjust based on /ctx overrun counts.
+budget_prefill=80000000000
+budget_decode=60000000000
+
+# Optional: set RNG seed for reproducible generation
+# seed=42

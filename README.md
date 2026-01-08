@@ -46,6 +46,9 @@ This produces:
 - `llama2.efi` (UEFI application)
 - `llm-baremetal-boot.img` (GPT + FAT32 image with `/EFI/BOOT/BOOTX64.EFI`)
 
+Optional:
+- `repl.cfg` (key=value config for REPL defaults). If present in `llm-baremetal/`, the image builder copies it to the image root.
+
 ## 📦 Key files
 
 ```
@@ -58,6 +61,61 @@ llm-baremetal/
 ├── run.ps1                 # Windows entrypoint (runs QEMU + OVMF)
 ├── stories15M.bin          # Model weights
 └── tokenizer.bin           # Tokenizer vocab
+
+Optional:
+├── repl.cfg.example        # Template config (copy to repl.cfg and tune)
+```
+
+## ⚙️ Configuration (optional)
+
+Copy `repl.cfg.example` to `repl.cfg` and adjust values:
+```bash
+cp repl.cfg.example repl.cfg
+# Edit repl.cfg with your preferred sampling/budgets/attn settings
+```
+
+The build script auto-includes `repl.cfg` in the boot image if present. Settings are loaded at boot before the REPL prompt.
+
+## 🎮 REPL Commands
+
+Once booted, the interactive REPL supports:
+
+**Sampling:**
+- `/temp <val>` - Temperature (0.0=greedy, 1.0=creative)
+- `/min_p <val>` - Min-p threshold (0.0-1.0)
+- `/top_p <val>` - Nucleus sampling (0.0-1.0)
+- `/top_k <int>` - Top-k sampling (0=off)
+- `/norepeat <n>` - No-repeat ngram size (0=off, typical 3-6)
+- `/repeat <val>` - Repetition penalty (1.0=none, 1.5=strong)
+- `/max_tokens <n>` - Max generation tokens (1-256)
+- `/seed <n>` - Set RNG seed
+
+**Diagnostics:**
+- `/model` - Show loaded model config
+- `/cpu` - Show CPU SIMD status (djiblas_sgemm + attn_simd)
+- `/zones` - Dump allocator zones + sentinel status
+- `/ctx` - Show model + sampling + budgets
+- `/log [n]` - Dump last n log entries (default 16, max 128)
+- `/save_log [n]` - Write last n log entries to `llmk-log.txt`
+- `/save_dump` - Write ctx+zones+sentinel+log to `llmk-dump.txt`
+- `/reset` - Clear budgets/log + untrip sentinel
+
+**Performance:**
+- `/budget [p] [d]` - Set budgets in cycles (p=prefill, d=decode)
+- `/attn [auto|sse2|avx2]` - Force attention SIMD path
+- `/test_failsafe [prefill|decode|both] [cycles]` - One-shot strict budget trip test
+
+**Other:**
+- `/stats <0|1>` - Toggle generation stats
+- `/stop_you <0|1>` - Toggle stop on `\nYou:` pattern
+- `/stop_nl <0|1>` - Toggle stop on double newline
+- `/help` - Show help
+
+**Files written to USB (after commands):**
+- `llmk-log.txt` - Ring log entries (`/save_log`)
+- `llmk-dump.txt` - Full diagnostic dump (`/save_dump`)
+- `llmk-failsafe.txt` - Auto-written on sentinel trip (budget overrun)
+
 ```
 
 ## 🔧 Requirements (for the blessed path)

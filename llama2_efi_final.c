@@ -390,12 +390,18 @@ static LlmkLog g_llmk_log;
 static LlmkSentinel g_sentinel;
 static int g_llmk_ready = 0;
 
+// Root volume handle (set after OpenVolume). Used for best-effort dumps to files.
+static EFI_FILE_HANDLE g_root = NULL;
+
 static UINT64 g_budget_prefill_cycles = 0;
 static UINT64 g_budget_decode_cycles = 0;
 
 // Rate-limit budget overrun prints (avoid flooding console).
 static UINT32 g_budget_overruns_prefill = 0;
 static UINT32 g_budget_overruns_decode = 0;
+
+// Forward decl (used by repl.cfg loader before definition)
+static void set_seed(unsigned int seed);
 
 static void llmk_reset_runtime_state(void) {
     // Budgets
@@ -498,6 +504,396 @@ static EFI_STATUS read_exact(EFI_FILE_HANDLE file, void *dst, UINTN total_bytes)
             }
         }
     }
+    return EFI_SUCCESS;
+}
+
+// ============================================================================
+// BEST-EFFORT DUMP TO FILE (UTF-16LE)
+// ============================================================================
+
+static EFI_STATUS llmk_open_text_file(EFI_FILE_HANDLE *out, const CHAR16 *name) {
+    if (!out) return EFI_INVALID_PARAMETER;
+    *out = NULL;
+    if (!g_root || !name) return EFI_NOT_READY;
+
+    EFI_FILE_HANDLE f = NULL;
+    EFI_STATUS st = uefi_call_wrapper(g_root->Open, 5, g_root, &f, (CHAR16 *)name,
+                                      EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0);
+    if (EFI_ERROR(st)) return st;
+
+    // Truncate to 0 and write BOM.
+    uefi_call_wrapper(f->SetPosition, 2, f, 0);
+    UINT16 bom = 0xFEFF;
+    UINTN nb = sizeof(bom);
+    uefi_call_wrapper(f->Write, 3, f, &nb, &bom);
+
+    *out = f;
+    return EFI_SUCCESS;
+}
+
+static EFI_STATUS llmk_open_read_file(EFI_FILE_HANDLE *out, const CHAR16 *name) {
+    if (!out) return EFI_INVALID_PARAMETER;
+    *out = NULL;
+    if (!g_root || !name) return EFI_NOT_READY;
+
+    EFI_FILE_HANDLE f = NULL;
+    EFI_STATUS st = uefi_call_wrapper(g_root->Open, 5, g_root, &f, (CHAR16 *)name, EFI_FILE_MODE_READ, 0);
+    if (EFI_ERROR(st)) return st;
+    *out = f;
+    return EFI_SUCCESS;
+}
+
+static int llmk_cfg_is_space(char c) {
+    return (c == ' ' || c == '\t' || c == '\r' || c == '\n');
+}
+
+static char llmk_cfg_tolower(char c) {
+    if (c >= 'A' && c <= 'Z') return (char)(c - 'A' + 'a');
+    return c;
+}
+
+static void llmk_cfg_trim(char **s) {
+    if (!s || !*s) return;
+    char *p = *s;
+    while (llmk_cfg_is_space(*p)) p++;
+    *s = p;
+    char *end = p;
+    while (*end) end++;
+    while (end > p && llmk_cfg_is_space(end[-1])) end--;
+    *end = 0;
+}
+
+static int llmk_cfg_streq_ci(const char *a, const char *b) {
+    if (!a || !b) return 0;
+    while (*a && *b) {
+        if (llmk_cfg_tolower(*a) != llmk_cfg_tolower(*b)) return 0;
+        a++;
+        b++;
+    }
+    return (*a == 0 && *b == 0);
+}
+
+static int llmk_cfg_parse_u64(const char *s, UINT64 *out) {
+    if (!s || !out) return 0;
+    UINT64 v = 0;
+    int any = 0;
+    while (*s && llmk_cfg_is_space(*s)) s++;
+    while (*s >= '0' && *s <= '9') {
+        any = 1;
+        v = v * 10ULL + (UINT64)(*s - '0');
+        s++;
+    }
+    if (!any) return 0;
+    *out = v;
+    return 1;
+}
+
+static int llmk_cfg_parse_i32(const char *s, int *out) {
+    if (!s || !out) return 0;
+    int sign = 1;
+    while (*s && llmk_cfg_is_space(*s)) s++;
+    if (*s == '-') { sign = -1; s++; }
+    int v = 0;
+    int any = 0;
+    while (*s >= '0' && *s <= '9') {
+        any = 1;
+        v = v * 10 + (int)(*s - '0');
+        s++;
+    }
+    if (!any) return 0;
+    *out = v * sign;
+    return 1;
+}
+
+static int llmk_cfg_parse_f32(const char *s, float *out) {
+    if (!s || !out) return 0;
+    int sign = 1;
+    while (*s && llmk_cfg_is_space(*s)) s++;
+    if (*s == '-') { sign = -1; s++; }
+    float val = 0.0f;
+    int any = 0;
+    while (*s >= '0' && *s <= '9') {
+        any = 1;
+        val = val * 10.0f + (float)(*s - '0');
+        s++;
+    }
+    if (*s == '.') {
+        s++;
+        float frac = 0.1f;
+        while (*s >= '0' && *s <= '9') {
+            any = 1;
+            val += (float)(*s - '0') * frac;
+            frac *= 0.1f;
+            s++;
+        }
+    }
+    if (!any) return 0;
+    *out = val * (float)sign;
+    return 1;
+}
+
+static int llmk_cfg_parse_bool(const char *s, int *out) {
+    if (!s || !out) return 0;
+    while (*s && llmk_cfg_is_space(*s)) s++;
+    if (llmk_cfg_streq_ci(s, "1") || llmk_cfg_streq_ci(s, "true") || llmk_cfg_streq_ci(s, "on") || llmk_cfg_streq_ci(s, "yes")) {
+        *out = 1;
+        return 1;
+    }
+    if (llmk_cfg_streq_ci(s, "0") || llmk_cfg_streq_ci(s, "false") || llmk_cfg_streq_ci(s, "off") || llmk_cfg_streq_ci(s, "no")) {
+        *out = 0;
+        return 1;
+    }
+    int iv = 0;
+    if (llmk_cfg_parse_i32(s, &iv)) {
+        *out = (iv != 0);
+        return 1;
+    }
+    return 0;
+}
+
+static void llmk_load_repl_cfg_best_effort(
+    float *temperature,
+    float *min_p,
+    float *top_p,
+    int *top_k,
+    float *repeat_penalty,
+    int *no_repeat_ngram,
+    int *max_gen_tokens,
+    int *stats_enabled,
+    int *stop_on_you,
+    int *stop_on_double_nl
+) {
+    EFI_FILE_HANDLE f = NULL;
+    EFI_STATUS st = llmk_open_read_file(&f, L"repl.cfg");
+    if (EFI_ERROR(st)) return;
+
+    char buf[4096];
+    UINTN sz = sizeof(buf) - 1;
+    st = uefi_call_wrapper(f->Read, 3, f, &sz, buf);
+    uefi_call_wrapper(f->Close, 1, f);
+    if (EFI_ERROR(st) || sz == 0) return;
+    buf[sz] = 0;
+
+    int applied = 0;
+
+    char *p = buf;
+    while (*p) {
+        char *line = p;
+        while (*p && *p != '\n') p++;
+        if (*p == '\n') { *p = 0; p++; }
+
+        // Trim CR and whitespace.
+        llmk_cfg_trim(&line);
+        if (line[0] == 0) continue;
+        if (line[0] == '#' || line[0] == ';') continue;
+
+        // Strip inline comment.
+        for (char *c = line; *c; c++) {
+            if (*c == '#') { *c = 0; break; }
+        }
+        llmk_cfg_trim(&line);
+        if (line[0] == 0) continue;
+
+        // key=value
+        char *eq = line;
+        while (*eq && *eq != '=') eq++;
+        if (*eq != '=') continue;
+        *eq = 0;
+        char *key = line;
+        char *val = eq + 1;
+        llmk_cfg_trim(&key);
+        llmk_cfg_trim(&val);
+        if (key[0] == 0) continue;
+
+        // Lowercase key in-place (ASCII).
+        for (char *k = key; *k; k++) *k = llmk_cfg_tolower(*k);
+
+        if (llmk_cfg_streq_ci(key, "temp") || llmk_cfg_streq_ci(key, "temperature")) {
+            float v;
+            if (llmk_cfg_parse_f32(val, &v)) {
+                if (v < 0.0f) v = 0.0f;
+                *temperature = v;
+                applied = 1;
+            }
+        } else if (llmk_cfg_streq_ci(key, "min_p")) {
+            float v;
+            if (llmk_cfg_parse_f32(val, &v)) {
+                if (v < 0.0f) v = 0.0f;
+                if (v > 1.0f) v = 1.0f;
+                *min_p = v;
+                applied = 1;
+            }
+        } else if (llmk_cfg_streq_ci(key, "top_p")) {
+            float v;
+            if (llmk_cfg_parse_f32(val, &v)) {
+                if (v < 0.0f) v = 0.0f;
+                if (v > 1.0f) v = 1.0f;
+                *top_p = v;
+                applied = 1;
+            }
+        } else if (llmk_cfg_streq_ci(key, "top_k")) {
+            int v;
+            if (llmk_cfg_parse_i32(val, &v)) {
+                if (v < 0) v = 0;
+                if (v > 256) v = 256;
+                *top_k = v;
+                applied = 1;
+            }
+        } else if (llmk_cfg_streq_ci(key, "repeat") || llmk_cfg_streq_ci(key, "repeat_penalty")) {
+            float v;
+            if (llmk_cfg_parse_f32(val, &v)) {
+                if (v <= 0.0f) v = 1.0f;
+                *repeat_penalty = v;
+                applied = 1;
+            }
+        } else if (llmk_cfg_streq_ci(key, "norepeat") || llmk_cfg_streq_ci(key, "no_repeat_ngram")) {
+            int v;
+            if (llmk_cfg_parse_i32(val, &v)) {
+                if (v < 0) v = 0;
+                if (v > 16) v = 16;
+                *no_repeat_ngram = v;
+                applied = 1;
+            }
+        } else if (llmk_cfg_streq_ci(key, "max_tokens")) {
+            int v;
+            if (llmk_cfg_parse_i32(val, &v)) {
+                if (v < 1) v = 1;
+                if (v > MAX_TOKENS) v = MAX_TOKENS;
+                *max_gen_tokens = v;
+                applied = 1;
+            }
+        } else if (llmk_cfg_streq_ci(key, "stats")) {
+            int b;
+            if (llmk_cfg_parse_bool(val, &b)) {
+                *stats_enabled = b;
+                applied = 1;
+            }
+        } else if (llmk_cfg_streq_ci(key, "stop_you")) {
+            int b;
+            if (llmk_cfg_parse_bool(val, &b)) {
+                *stop_on_you = b;
+                applied = 1;
+            }
+        } else if (llmk_cfg_streq_ci(key, "stop_nl")) {
+            int b;
+            if (llmk_cfg_parse_bool(val, &b)) {
+                *stop_on_double_nl = b;
+                applied = 1;
+            }
+        } else if (llmk_cfg_streq_ci(key, "seed")) {
+            int v;
+            if (llmk_cfg_parse_i32(val, &v)) {
+                if (v < 0) v = -v;
+                set_seed((unsigned int)v);
+                applied = 1;
+            }
+        } else if (llmk_cfg_streq_ci(key, "budget")) {
+            UINT64 v;
+            if (llmk_cfg_parse_u64(val, &v)) {
+                g_budget_prefill_cycles = v;
+                g_budget_decode_cycles = v;
+                applied = 1;
+            }
+        } else if (llmk_cfg_streq_ci(key, "budget_prefill")) {
+            UINT64 v;
+            if (llmk_cfg_parse_u64(val, &v)) {
+                g_budget_prefill_cycles = v;
+                applied = 1;
+            }
+        } else if (llmk_cfg_streq_ci(key, "budget_decode")) {
+            UINT64 v;
+            if (llmk_cfg_parse_u64(val, &v)) {
+                g_budget_decode_cycles = v;
+                applied = 1;
+            }
+        } else if (llmk_cfg_streq_ci(key, "strict_budget")) {
+            int b;
+            if (llmk_cfg_parse_bool(val, &b)) {
+                g_sentinel.cfg.strict_budget = (b != 0);
+                applied = 1;
+            }
+        } else if (llmk_cfg_streq_ci(key, "attn")) {
+            if (llmk_cfg_streq_ci(val, "auto")) {
+                g_attn_force = -1;
+                applied = 1;
+            } else if (llmk_cfg_streq_ci(val, "sse2")) {
+                g_attn_force = 0;
+                applied = 1;
+            } else if (llmk_cfg_streq_ci(val, "avx2")) {
+                if (g_attn_use_avx2) {
+                    g_attn_force = 1;
+                    applied = 1;
+                }
+            }
+        }
+    }
+
+    if (applied) {
+        Print(L"[cfg] repl.cfg loaded\r\n");
+    }
+}
+
+static EFI_STATUS llmk_file_write_u16(EFI_FILE_HANDLE f, const CHAR16 *s) {
+    if (!f || !s) return EFI_INVALID_PARAMETER;
+    UINTN chars = (UINTN)StrLen((CHAR16 *)s);
+    UINTN nb = chars * sizeof(CHAR16);
+    if (nb == 0) return EFI_SUCCESS;
+    return uefi_call_wrapper(f->Write, 3, f, &nb, (void *)s);
+}
+
+static EFI_STATUS llmk_dump_zones_to_file(EFI_FILE_HANDLE f, const LlmkZones *zones) {
+    if (!f || !zones) return EFI_INVALID_PARAMETER;
+    CHAR16 line[256];
+    SPrint(line, sizeof(line), L"[llmk] Zone B: base=0x%lx size=%lu MiB\r\n",
+           (UINT64)zones->zone_b_base, zones->zone_b_size / (1024ULL * 1024ULL));
+    llmk_file_write_u16(f, line);
+    for (int i = 0; i < LLMK_ARENA_COUNT; i++) {
+        const LlmkArena *a = &zones->arenas[i];
+        SPrint(line, sizeof(line), L"  [%s] base=0x%lx size=%lu MiB used=%lu MiB flags=0x%x\r\n",
+               a->name,
+               a->base,
+               a->size / (1024ULL * 1024ULL),
+               a->cursor / (1024ULL * 1024ULL),
+               (unsigned)a->flags);
+        llmk_file_write_u16(f, line);
+    }
+    llmk_file_write_u16(f, L"\r\n");
+    return EFI_SUCCESS;
+}
+
+static EFI_STATUS llmk_dump_sentinel_to_file(EFI_FILE_HANDLE f, const LlmkSentinel *s) {
+    if (!f || !s) return EFI_INVALID_PARAMETER;
+    CHAR16 line[256];
+    SPrint(line, sizeof(line), L"[llmk][sentinel] enabled=%d strict=%d max_cycles=%lu last_err=%d reason=%s\r\n\r\n",
+           s->cfg.enabled ? 1 : 0,
+           s->cfg.strict_mode ? 1 : 0,
+           s->cfg.max_cycles,
+           (int)s->last_error,
+           s->last_reason);
+    llmk_file_write_u16(f, line);
+    return EFI_SUCCESS;
+}
+
+static EFI_STATUS llmk_dump_log_to_file(EFI_FILE_HANDLE f, const LlmkLog *log, UINT32 max_entries) {
+    if (!f || !log || !log->entries || log->capacity == 0) return EFI_INVALID_PARAMETER;
+
+    UINT32 n = log->capacity;
+    if (max_entries != 0 && max_entries < n) n = max_entries;
+
+    CHAR16 line[256];
+    SPrint(line, sizeof(line), L"[llmk][log] last %u events (ring cap=%u)\r\n", n, log->capacity);
+    llmk_file_write_u16(f, line);
+
+    UINT32 w = log->write_idx;
+    for (UINT32 i = 0; i < n; i++) {
+        UINT32 off = (w + log->capacity - 1 - i) % log->capacity;
+        const LlmkLogEntry *e = &log->entries[off];
+        if (e->tsc == 0 && e->code == 0 && e->msg[0] == 0) continue;
+        SPrint(line, sizeof(line), L"  #%u tsc=%lu code=%u arena=%d ptr=0x%lx size=%lu msg=%s\r\n",
+               i, e->tsc, e->code, e->arena, e->ptr, e->size, e->msg);
+        llmk_file_write_u16(f, line);
+    }
+    llmk_file_write_u16(f, L"\r\n");
     return EFI_SUCCESS;
 }
 
@@ -1230,6 +1626,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         Print(L"ERROR: OpenVolume failed\r\n");
         return status;
     }
+
+    // Persist root handle for best-effort dumps.
+    g_root = Root;
     
     Print(L"OK: File system ready\r\n\r\n");
 
@@ -1597,7 +1996,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     Print(L"----------------------------------------\r\n");
     Print(L"  CHAT MODE ACTIVE\r\n");
     Print(L"  Type 'quit' or 'exit' to stop\r\n");
-    Print(L"  Commands: /temp /min_p /top_p /top_k /norepeat /repeat /max_tokens /seed /stats /stop_you /stop_nl /model /cpu /zones /budget /attn /test_failsafe /ctx /log /reset /help\r\n");
+    Print(L"  Commands: /temp /min_p /top_p /top_k /norepeat /repeat /max_tokens /seed /stats /stop_you /stop_nl /model /cpu /zones /budget /attn /test_failsafe /ctx /log /save_log /save_dump /reset /version /help\r\n");
     Print(L"----------------------------------------\r\n\r\n");
     
     // Sampling parameters
@@ -1612,6 +2011,20 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     int stats_enabled = 1;
     int stop_on_you = 1;
     int stop_on_double_nl = 0;
+
+    // Optional config: repl.cfg (key=value). Best-effort; ignored if missing.
+    llmk_load_repl_cfg_best_effort(
+        &temperature,
+        &min_p,
+        &top_p,
+        &top_k,
+        &repeat_penalty,
+        &no_repeat_ngram,
+        &max_gen_tokens,
+        &stats_enabled,
+        &stop_on_you,
+        &stop_on_double_nl
+    );
     
     int conversation_count = 0;
     
@@ -1989,6 +2402,94 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 }
                 llmk_print_log(n);
                 continue;
+            } else if (my_strncmp(prompt, "/save_log", 9) == 0) {
+                if (!g_llmk_ready || !g_llmk_log.capacity) {
+                    Print(L"\r\n  (log not available)\r\n\r\n");
+                    continue;
+                }
+
+                UINT32 n = 64;
+                if (prompt[9] == ' ') {
+                    int i = 10;
+                    UINT32 val = 0;
+                    while (prompt[i] >= '0' && prompt[i] <= '9') {
+                        val = val * 10u + (UINT32)(prompt[i] - '0');
+                        i++;
+                    }
+                    if (val > 0) n = val;
+                    if (n > 128) n = 128;
+                }
+
+                EFI_FILE_HANDLE f = NULL;
+                EFI_STATUS st = llmk_open_text_file(&f, L"llmk-log.txt");
+                if (EFI_ERROR(st)) {
+                    Print(L"\r\nERROR: failed to open llmk-log.txt: %r\r\n\r\n", st);
+                    continue;
+                }
+                llmk_dump_log_to_file(f, &g_llmk_log, n);
+                EFI_STATUS flush_st = uefi_call_wrapper(f->Flush, 1, f);
+                uefi_call_wrapper(f->Close, 1, f);
+                if (EFI_ERROR(flush_st)) {
+                    Print(L"\r\nWARNING: flush failed %r (file may not persist)\r\n\r\n", flush_st);
+                } else {
+                    Print(L"\r\nOK: wrote llmk-log.txt (flushed)\r\n\r\n");
+                }
+                continue;
+            } else if (my_strncmp(prompt, "/save_dump", 10) == 0) {
+                if (!g_llmk_ready) {
+                    Print(L"\r\n  (llmk not ready)\r\n\r\n");
+                    continue;
+                }
+
+                EFI_FILE_HANDLE f = NULL;
+                EFI_STATUS st = llmk_open_text_file(&f, L"llmk-dump.txt");
+                if (EFI_ERROR(st)) {
+                    Print(L"\r\nERROR: failed to open llmk-dump.txt: %r\r\n\r\n", st);
+                    continue;
+                }
+
+                // Minimal ctx dump (match /ctx, in UTF-16)
+                {
+                    CHAR16 line[256];
+                    llmk_file_write_u16(f, L"Context:\r\n");
+                    SPrint(line, sizeof(line), L"  model=stories110M.bin\r\n");
+                    llmk_file_write_u16(f, line);
+                    SPrint(line, sizeof(line), L"  dim=%d layers=%d heads=%d kv=%d vocab=%d seq=%d\r\n",
+                           config.dim, config.n_layers, config.n_heads, config.n_kv_heads, config.vocab_size, config.seq_len);
+                    llmk_file_write_u16(f, line);
+                    llmk_file_write_u16(f, L"Sampling:\r\n");
+                    SPrint(line, sizeof(line), L"  temp=%d.%02d min_p=%d.%02d top_p=%d.%02d top_k=%d\r\n",
+                           (int)temperature, (int)((temperature - (int)temperature) * 100.0f),
+                           (int)min_p, (int)((min_p - (int)min_p) * 100.0f),
+                           (int)top_p, (int)((top_p - (int)top_p) * 100.0f),
+                           top_k);
+                    llmk_file_write_u16(f, line);
+                    SPrint(line, sizeof(line), L"  norepeat=%d repeat_penalty=%d.%02d max_tokens=%d\r\n",
+                           no_repeat_ngram,
+                           (int)repeat_penalty, (int)((repeat_penalty - (int)repeat_penalty) * 100.0f),
+                           max_gen_tokens);
+                    llmk_file_write_u16(f, line);
+                    llmk_file_write_u16(f, L"Budgets:\r\n");
+                    SPrint(line, sizeof(line), L"  prefill_max=%lu decode_max=%lu overruns(p=%d d=%d)\r\n\r\n",
+                           g_budget_prefill_cycles, g_budget_decode_cycles,
+                           (int)g_budget_overruns_prefill, (int)g_budget_overruns_decode);
+                    llmk_file_write_u16(f, line);
+                }
+
+                llmk_dump_zones_to_file(f, &g_zones);
+                llmk_dump_sentinel_to_file(f, &g_sentinel);
+                if (g_llmk_log.capacity) {
+                    llmk_dump_log_to_file(f, &g_llmk_log, 128);
+                }
+
+                EFI_STATUS flush_st = uefi_call_wrapper(f->Flush, 1, f);
+                uefi_call_wrapper(f->Close, 1, f);
+                if (EFI_ERROR(flush_st)) {
+                    Print(L"\r\nWARNING: flush failed %r (file may not persist)\r\n\r\n", flush_st);
+                } else {
+                    Print(L"\r\nOK: wrote llmk-dump.txt (flushed)\r\n\r\n");
+                }
+                continue;
             } else if (my_strncmp(prompt, "/reset", 6) == 0) {
                 Print(L"\r\nResetting runtime state...\r\n");
                 if (g_llmk_ready) {
@@ -1997,6 +2498,13 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 } else {
                     Print(L"  (llmk not ready)\r\n\r\n");
                 }
+                continue;
+            } else if (my_strncmp(prompt, "/version", 8) == 0) {
+                Print(L"\r\nLLAMA2 CHAT REPL V3 - Bare-Metal Edition\r\n");
+                Print(L"  Build: 2026-01-07 (Jan 7)\r\n");
+                Print(L"  SIMD: djiblas_sgemm AVX2+FMA, attention AVX2\r\n");
+                Print(L"  Features: LLM-Kernel (zones+sentinel+log), UTF-8 streaming, persist dumps\r\n");
+                Print(L"  Made in Senegal 🇸🇳 by Djiby Diop\r\n\r\n");
                 continue;
             } else if (my_strncmp(prompt, "/help", 5) == 0) {
                 Print(L"\r\nCommands:\r\n");
@@ -2019,7 +2527,10 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 Print(L"  /test_failsafe [prefill|decode|both] [cycles] - One-shot strict budget trip\r\n");
                 Print(L"  /ctx          - Show model + sampling + budgets\r\n");
                 Print(L"  /log [n]      - Dump last n log entries\r\n");
+                Print(L"  /save_log [n] - Write last n log entries to llmk-log.txt\r\n");
+                Print(L"  /save_dump    - Write ctx+zones+sentinel+log to llmk-dump.txt\r\n");
                 Print(L"  /reset        - Clear budgets/log + untrip sentinel\r\n");
+                Print(L"  /version      - Show build version + features\r\n");
                 Print(L"  /help         - Show this help\r\n\r\n");
                 Print(L"Current settings:\r\n");
                 Print(L"  Temperature: ");
@@ -2092,6 +2603,21 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                     llmk_zones_print(&g_zones);
                     llmk_sentinel_print_status(&g_sentinel);
                     llmk_print_log(32);
+
+                    // Best-effort: persist dump to file for offline diagnosis.
+                    {
+                        EFI_FILE_HANDLE f = NULL;
+                        EFI_STATUS st = llmk_open_text_file(&f, L"llmk-failsafe.txt");
+                        if (!EFI_ERROR(st)) {
+                            llmk_file_write_u16(f, L"FAIL-SAFE: prefill\r\n\r\n");
+                            llmk_dump_zones_to_file(f, &g_zones);
+                            llmk_dump_sentinel_to_file(f, &g_sentinel);
+                            if (g_llmk_log.capacity) llmk_dump_log_to_file(f, &g_llmk_log, 128);
+                            uefi_call_wrapper(f->Flush, 1, f);
+                            uefi_call_wrapper(f->Close, 1, f);
+                            Print(L"[llmk] wrote llmk-failsafe.txt\r\n");
+                        }
+                    }
                     if (g_test_failsafe_active) {
                         g_sentinel.cfg.strict_budget = g_test_failsafe_prev_strict_budget;
                         g_budget_prefill_cycles = g_test_failsafe_prev_prefill;
@@ -2266,6 +2792,21 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                     llmk_zones_print(&g_zones);
                     llmk_sentinel_print_status(&g_sentinel);
                     llmk_print_log(32);
+
+                    // Best-effort: persist dump to file for offline diagnosis.
+                    {
+                        EFI_FILE_HANDLE f = NULL;
+                        EFI_STATUS st = llmk_open_text_file(&f, L"llmk-failsafe.txt");
+                        if (!EFI_ERROR(st)) {
+                            llmk_file_write_u16(f, L"FAIL-SAFE: decode\r\n\r\n");
+                            llmk_dump_zones_to_file(f, &g_zones);
+                            llmk_dump_sentinel_to_file(f, &g_sentinel);
+                            if (g_llmk_log.capacity) llmk_dump_log_to_file(f, &g_llmk_log, 128);
+                            uefi_call_wrapper(f->Flush, 1, f);
+                            uefi_call_wrapper(f->Close, 1, f);
+                            Print(L"[llmk] wrote llmk-failsafe.txt\r\n");
+                        }
+                    }
                     if (g_test_failsafe_active) {
                         g_sentinel.cfg.strict_budget = g_test_failsafe_prev_strict_budget;
                         g_budget_prefill_cycles = g_test_failsafe_prev_prefill;

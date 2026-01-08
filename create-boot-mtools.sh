@@ -104,6 +104,12 @@ echo "  ✅ Copied $(basename "$MODEL_BIN") (${MODEL_MIB} MB)"
 mcopy tokenizer.bin z:/
 echo "  ✅ Copied tokenizer.bin"
 
+# Optional REPL config (key=value). If present, copy to root.
+if [ -f repl.cfg ]; then
+    mcopy repl.cfg z:/
+    echo "  ✅ Copied repl.cfg"
+fi
+
 # Create startup.nsh for auto-boot.
 # Keep the UEFI shell alive after BOOTX64.EFI returns (avoids landing in the firmware boot manager UI).
 cat > startup.nsh <<'EOF'

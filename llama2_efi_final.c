@@ -18,6 +18,9 @@
 #include "llmk_log.h"
 #include "llmk_sentinel.h"
 
+// DjibMark - Omnipresent execution tracing (Made in Senegal 🇸🇳)
+#include "djibmark.h"
+
 // Model config
 #define DIM 288
 #define HIDDEN_DIM 768
@@ -389,6 +392,9 @@ static LlmkZones g_zones;
 static LlmkLog g_llmk_log;
 static LlmkSentinel g_sentinel;
 static int g_llmk_ready = 0;
+
+// DjibMark global state
+DjibMarkState g_djibmark_state = {0};
 
 // Root volume handle (set after OpenVolume). Used for best-effort dumps to files.
 static EFI_FILE_HANDLE g_root = NULL;
@@ -1138,6 +1144,13 @@ typedef struct {
 // ============================================================================
 
 void transformer_forward(RunState* s, TransformerWeights* w, Config* p, int token, int pos) {
+    // DjibMark: record entry into transformer (prefill vs decode determined by caller)
+    if (pos == 0) {
+        DJIBMARK_PREFILL();
+    } else {
+        DJIBMARK_DECODE();
+    }
+    
     int dim = p->dim;
     int hidden_dim = p->hidden_dim;
     int n_layers = p->n_layers;
@@ -1605,6 +1618,10 @@ void reset_kv_cache(RunState* s, Config* p) {
 
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     InitializeLib(ImageHandle, SystemTable);
+
+    // Initialize DjibMark tracing system (Made in Senegal 🇸🇳)
+    djibmark_init();
+    DJIBMARK_BOOT();
 
     // Disable the UEFI watchdog timer (large model loads can take minutes).
     // If not disabled, firmware may reset/reboot mid-load and it looks like a hang.
@@ -2525,10 +2542,84 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 continue;
             } else if (my_strncmp(prompt, "/version", 8) == 0) {
                 Print(L"\r\nLLAMA2 CHAT REPL V3 - Bare-Metal Edition\r\n");
-                Print(L"  Build: 2026-01-07 (Jan 7)\r\n");
+                Print(L"  Build: 2026-01-08 (Jan 8)\r\n");
                 Print(L"  SIMD: djiblas_sgemm AVX2+FMA, attention AVX2\r\n");
-                Print(L"  Features: LLM-Kernel (zones+sentinel+log), UTF-8 streaming, persist dumps\r\n");
+                Print(L"  Features: LLM-Kernel (zones+sentinel+log), DjibMark tracing, UTF-8, persist\r\n");
                 Print(L"  Made in Senegal 🇸🇳 by Djiby Diop\r\n\r\n");
+                continue;
+            } else if (my_strncmp(prompt, "/djibmarks", 10) == 0) {
+                DJIBMARK_REPL();
+                Print(L"\r\nDjibMark Trace (last %d marks):\r\n", (int)djibmark_count());
+                Print(L"  Magic: 0x%08X (DJIB2026)\r\n", DJIBMARK_MAGIC);
+                Print(L"  Total recorded: %u\r\n", g_djibmark_state.total_marks);
+                Print(L"  Enabled: %s\r\n\r\n", g_djibmark_state.enabled ? L"yes" : L"no");
+                
+                UINT32 count = djibmark_count();
+                if (count > 32) count = 32;  // Limit to 32 most recent
+                
+                Print(L"  Seq      TSC          Phase    Location\r\n");
+                Print(L"  -------- ------------ -------- ------------------\r\n");
+                for (UINT32 i = 0; i < count; i++) {
+                    DjibMark* m = djibmark_get(i);
+                    if (!m || m->magic != DJIBMARK_MAGIC) continue;
+                    
+                    // Convert CHAR8* to print char by char
+                    Print(L"  %08u %012lu %-8s ", m->sequence, m->timestamp_tsc, djibmark_phase_name(m->phase));
+                    if (m->location) {
+                        for (const CHAR8* p = m->location; *p; p++) {
+                            Print(L"%c", (CHAR16)*p);
+                        }
+                    }
+                    Print(L":%u\r\n", m->line);
+                }
+                Print(L"\r\n");
+                continue;
+            } else if (my_strncmp(prompt, "/djibperf", 9) == 0) {
+                DJIBMARK_REPL();
+                Print(L"\r\nDjibMark Performance Analysis:\r\n\r\n");
+                
+                UINT32 count = djibmark_count();
+                if (count < 2) {
+                    Print(L"  Need at least 2 marks for analysis\r\n\r\n");
+                    continue;
+                }
+                
+                // Analyze phase transitions
+                UINT64 prefill_cycles = 0, decode_cycles = 0;
+                UINT32 prefill_count = 0, decode_count = 0;
+                
+                for (UINT32 i = 1; i < count && i < 128; i++) {
+                    DjibMark* curr = djibmark_get(i-1);
+                    DjibMark* prev = djibmark_get(i);
+                    if (!curr || !prev) continue;
+                    if (curr->magic != DJIBMARK_MAGIC || prev->magic != DJIBMARK_MAGIC) continue;
+                    
+                    UINT64 delta = (curr->timestamp_tsc > prev->timestamp_tsc) 
+                                   ? (curr->timestamp_tsc - prev->timestamp_tsc) : 0;
+                    
+                    if (curr->phase == DJIBMARK_PHASE_PREFILL) {
+                        prefill_cycles += delta;
+                        prefill_count++;
+                    } else if (curr->phase == DJIBMARK_PHASE_DECODE) {
+                        decode_cycles += delta;
+                        decode_count++;
+                    }
+                }
+                
+                Print(L"  Prefill phase:\r\n");
+                Print(L"    Count: %u marks\r\n", prefill_count);
+                Print(L"    Total cycles: %lu\r\n", prefill_cycles);
+                if (prefill_count > 0) {
+                    Print(L"    Avg cycles/mark: %lu\r\n", prefill_cycles / prefill_count);
+                }
+                
+                Print(L"\r\n  Decode phase:\r\n");
+                Print(L"    Count: %u marks\r\n", decode_count);
+                Print(L"    Total cycles: %lu\r\n", decode_cycles);
+                if (decode_count > 0) {
+                    Print(L"    Avg cycles/mark: %lu\r\n", decode_cycles / decode_count);
+                }
+                Print(L"\r\n");
                 continue;
             } else if (my_strncmp(prompt, "/help", 5) == 0) {
                 Print(L"\r\nCommands:\r\n");
@@ -2555,7 +2646,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 Print(L"  /save_dump    - Write ctx+zones+sentinel+log to llmk-dump.txt\r\n");
                 Print(L"  /reset        - Clear budgets/log + untrip sentinel\r\n");
                 Print(L"  /clear        - Clear KV cache (reset conversation context)\r\n");
-                Print(L"  /version      - Show build info\r\n");
+                Print(L"  /djibmarks    - Show DjibMark execution trace (Made in 🇸🇳)\r\n");
+                Print(L"  /djibperf     - DjibMark performance analysis by phase\r\n");
                 Print(L"  /version      - Show build version + features\r\n");
                 Print(L"  /help         - Show this help\r\n\r\n");
                 Print(L"Current settings:\r\n");

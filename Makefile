@@ -1,4 +1,4 @@
-# Makefile for Llama2 Bare-Metal UEFI - Clean & Simple
+# Makefile for Llama2 Bare-Metal UEFI (stable REPL build)
 # Made in Senegal 🇸🇳
 
 ARCH = x86_64
@@ -14,23 +14,12 @@ LDFLAGS = -nostdlib -znocombreloc -T /usr/lib/elf_$(ARCH)_efi.lds \
 
 LIBS = -lefi -lgnuefi
 
-# Default build: chat REPL (single-file)
+# Stable build: chat REPL (single-file + kernel primitives)
 TARGET = llama2.efi
 REPL_SRC = llama2_efi_final.c
 REPL_OBJ = llama2_repl.o
 REPL_OBJS = $(REPL_OBJ) llmk_zones.o llmk_log.o llmk_sentinel.o djiblas.o djiblas_avx2.o attention_avx2.o
 REPL_SO  = llama2_repl.so
-
-# LLM-Kernel (new clean workstream)
-LLMK_TARGET = llmkernel.efi
-LLMK_SRC = llm_kernel_efi.c
-LLMK_OBJS = llm_kernel_efi.o llmk_zones.o llmk_log.o llmk_sentinel.o llmk_infer.o djiblas.o djiblas_avx2.o attention_avx2.o
-LLMK_SO = llmkernel.so
-
-# Legacy/optimized build (kept for djiblas experiments)
-KERNEL_SRC = llama2_efi.c
-KERNEL_OBJS = llama2_efi.o djiblas.o djiblas_avx2.o attention_avx2.o
-KERNEL_SO = llama2_efi.so
 
 all: repl
 
@@ -41,16 +30,6 @@ repl: $(TARGET)
 $(REPL_OBJ): $(REPL_SRC) djiblas.h
 	$(CC) $(CFLAGS) -c $(REPL_SRC) -o $(REPL_OBJ)
 
-llmkernel: $(LLMK_TARGET)
-	@echo "✅ Build complete: $(LLMK_TARGET)"
-	@ls -lh $(LLMK_TARGET)
-
-llm_kernel_efi.o: $(LLMK_SRC) djiblas.h llmk_zones.h llmk_log.h llmk_sentinel.h llmk_infer.h
-	$(CC) $(CFLAGS) -c $(LLMK_SRC) -o llm_kernel_efi.o
-
-llmk_infer.o: llmk_infer.c llmk_infer.h llmk_zones.h llmk_sentinel.h llmk_log.h djiblas.h
-	$(CC) $(CFLAGS) -c llmk_infer.c -o llmk_infer.o
-
 llmk_zones.o: llmk_zones.c llmk_zones.h
 	$(CC) $(CFLAGS) -c llmk_zones.c -o llmk_zones.o
 
@@ -60,26 +39,12 @@ llmk_log.o: llmk_log.c llmk_log.h llmk_zones.h
 llmk_sentinel.o: llmk_sentinel.c llmk_sentinel.h llmk_zones.h llmk_log.h
 	$(CC) $(CFLAGS) -c llmk_sentinel.c -o llmk_sentinel.o
 
-$(LLMK_SO): $(LLMK_OBJS)
-	ld $(LDFLAGS) $(LLMK_OBJS) -o $(LLMK_SO) $(LIBS)
-
-$(LLMK_TARGET): $(LLMK_SO)
-	objcopy -j .text -j .sdata -j .data -j .dynamic -j .dynsym \
-			-j .rel -j .rela -j .reloc --target=efi-app-$(ARCH) $(LLMK_SO) $(LLMK_TARGET)
-
 $(REPL_SO): $(REPL_OBJS)
 	ld $(LDFLAGS) $(REPL_OBJS) -o $(REPL_SO) $(LIBS)
 
 $(TARGET): $(REPL_SO)
 	objcopy -j .text -j .sdata -j .data -j .dynamic -j .dynsym \
 			-j .rel -j .rela -j .reloc --target=efi-app-$(ARCH) $(REPL_SO) $(TARGET)
-
-kernel: $(KERNEL_SO)
-	@echo "✅ Build complete: $(KERNEL_SO)"
-	@ls -lh $(KERNEL_SO)
-
-llama2_efi.o: $(KERNEL_SRC) djiblas.h
-	$(CC) $(CFLAGS) -c $(KERNEL_SRC) -o llama2_efi.o
 
 djiblas.o: djiblas.c djiblas.h
 	$(CC) $(CFLAGS) -c djiblas.c -o djiblas.o
@@ -90,11 +55,8 @@ djiblas_avx2.o: djiblas_avx2.c djiblas.h
 attention_avx2.o: attention_avx2.c
 	$(CC) $(CFLAGS) -mavx2 -mfma -c attention_avx2.c -o attention_avx2.o
 
-$(KERNEL_SO): $(KERNEL_OBJS)
-	ld $(LDFLAGS) $(KERNEL_OBJS) -o $(KERNEL_SO) $(LIBS)
-
 clean:
-	rm -f *.o *.so $(TARGET) $(LLMK_TARGET)
+	rm -f *.o *.so $(TARGET)
 	@echo "✅ Clean complete"
 
 rebuild: clean all

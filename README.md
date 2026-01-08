@@ -6,7 +6,12 @@ Made in Senegal 🇸🇳 by Djiby Diop - December 2025
 
 ## 🎯 What is this?
 
-This project runs a **15M parameter language model** (stories15M) directly on bare-metal hardware without any operating system. It boots from USB and generates text at ~1 token/second.
+This project runs **TinyStories language models** (15M-300M parameters) directly on bare-metal hardware without any operating system. It boots from USB and features:
+- **Multi-model support**: Auto-detects stories300M/260M/200M/110M/15M/model.bin
+- **Persistent KV cache**: Context retained across prompts for conversation flow
+- **Multi-line prompts**: Use `\` to continue lines, `;;` to submit
+- **SIMD acceleration**: AVX2+FMA on compatible CPUs (~26-32 tok/s on i5-8250U)
+- **LLM-Kernel diagnostics**: Zone allocator, cycle budgets, sentinel fail-safe
 
 ## 📦 Project Structure
 
@@ -105,11 +110,17 @@ Once booted, the interactive REPL supports:
 - `/attn [auto|sse2|avx2]` - Force attention SIMD path
 - `/test_failsafe [prefill|decode|both] [cycles]` - One-shot strict budget trip test
 
-**Other:**
+**Context & UI:**
 - `/stats <0|1>` - Toggle generation stats
 - `/stop_you <0|1>` - Toggle stop on `\nYou:` pattern
 - `/stop_nl <0|1>` - Toggle stop on double newline
+- `/clear` - Clear KV cache (reset conversation context)
+- `/version` - Show build info and features
 - `/help` - Show help
+
+**Multi-line prompts:**
+- End line with `\` to continue on next line
+- Type `;;` on a line by itself to submit multi-line prompt
 
 **Files written to USB (after commands):**
 - `llmk-log.txt` - Ring log entries (`/save_log`)

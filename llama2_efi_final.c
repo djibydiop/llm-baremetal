@@ -1532,6 +1532,7 @@ void encode(char* text, int* tokens, int* n_tokens, int max_tokens, Tokenizer* t
 void read_user_input(CHAR16* buffer, int max_len) {
     int pos = 0;
     EFI_INPUT_KEY Key;
+    int line_start = 0;
     
     while (pos < max_len - 1) {
         // Wait for key
@@ -1540,11 +1541,25 @@ void read_user_input(CHAR16* buffer, int max_len) {
         uefi_call_wrapper(ST->ConIn->ReadKeyStroke, 2, ST->ConIn, &Key);
         
         if (Key.UnicodeChar == 0x000D) {  // Enter
+            // Check for multi-line continuation: if line ends with '\', continue
+            if (pos > 0 && buffer[pos - 1] == L'\\') {
+                buffer[pos - 1] = L'\n';  // Replace \ with newline
+                Print(L"\r\n... ");
+                line_start = pos;
+                continue;
+            }
+            // Check for empty line with ";;" to end multi-line input
+            if (pos >= 2 && buffer[pos - 2] == L';' && buffer[pos - 1] == L';') {
+                pos -= 2;  // Remove ;;
+                buffer[pos] = 0;
+                Print(L"\r\n");
+                break;
+            }
             buffer[pos] = 0;
             Print(L"\r\n");
             break;
         } else if (Key.UnicodeChar == 0x0008) {  // Backspace
-            if (pos > 0) {
+            if (pos > line_start) {
                 pos--;
                 Print(L"\b \b");
             }
@@ -2028,6 +2043,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     
     int conversation_count = 0;
     
+    // KV cache position tracking (persistent across prompts for context retention)
+    int kv_pos = 0;
+    
     // MAIN LOOP
     while (1) {
         conversation_count++;
@@ -2499,6 +2517,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                     Print(L"  (llmk not ready)\r\n\r\n");
                 }
                 continue;
+            } else if (my_strncmp(prompt, "/clear", 6) == 0) {
+                Print(L"\r\nClearing KV cache...\r\n");
+                reset_kv_cache(&state, &config);
+                kv_pos = 0;
+                Print(L"OK: KV cache cleared, context reset\r\n\r\n");
+                continue;
             } else if (my_strncmp(prompt, "/version", 8) == 0) {
                 Print(L"\r\nLLAMA2 CHAT REPL V3 - Bare-Metal Edition\r\n");
                 Print(L"  Build: 2026-01-07 (Jan 7)\r\n");
@@ -2530,6 +2554,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 Print(L"  /save_log [n] - Write last n log entries to llmk-log.txt\r\n");
                 Print(L"  /save_dump    - Write ctx+zones+sentinel+log to llmk-dump.txt\r\n");
                 Print(L"  /reset        - Clear budgets/log + untrip sentinel\r\n");
+                Print(L"  /clear        - Clear KV cache (reset conversation context)\r\n");
+                Print(L"  /version      - Show build info\r\n");
                 Print(L"  /version      - Show build version + features\r\n");
                 Print(L"  /help         - Show this help\r\n\r\n");
                 Print(L"Current settings:\r\n");
@@ -2555,24 +2581,18 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             }
         }
         
-        // Reset KV cache AND all state for new generation
-        reset_kv_cache(&state, &config);
-        
-        // Zero out state buffers
-        for (int i = 0; i < config.dim; i++) {
-            state.x[i] = 0.0f;
-            state.xb[i] = 0.0f;
-            state.xb2[i] = 0.0f;
-        }
-        for (int i = 0; i < config.hidden_dim; i++) {
-            state.hb[i] = 0.0f;
-            state.hb2[i] = 0.0f;
-        }
-        
         // Encode prompt
         int prompt_tokens[256];
         int n_prompt_tokens = 0;
         encode(prompt, prompt_tokens, &n_prompt_tokens, 256, &tokenizer);
+        
+        // Check if KV cache will overflow
+        if (kv_pos + n_prompt_tokens + max_gen_tokens > config.seq_len) {
+            Print(L"\r\nWARNING: context too long (%d + %d tokens), clearing KV cache\r\n", 
+                  kv_pos, n_prompt_tokens + max_gen_tokens);
+            reset_kv_cache(&state, &config);
+            kv_pos = 0;
+        }
         
         Print(L"AI: ");
 
@@ -2586,6 +2606,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         
         // Process prompt tokens through model first (prefill)
         for (int i = 0; i < n_prompt_tokens; i++) {
+            int pos = kv_pos + i;  // Use persistent KV position
             if (g_llmk_ready) {
                 // Per-token prefill budgeting (pos-dependent): set budget before each forward.
                 if (g_budget_prefill_cycles == 0) {
@@ -2595,7 +2616,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 }
                 g_sentinel.cfg.max_cycles_prefill = g_budget_prefill_cycles;
                 llmk_sentinel_phase_start(&g_sentinel, LLMK_PHASE_PREFILL);
-                transformer_forward(&state, &weights, &config, prompt_tokens[i], i);
+                transformer_forward(&state, &weights, &config, prompt_tokens[i], pos);
                 BOOLEAN ok = llmk_sentinel_phase_end(&g_sentinel);
                 if (g_sentinel.tripped) {
                     Print(L"\r\n[llmk] prefill stopped (fail-safe) at i=%d\r\n", i);
@@ -2645,7 +2666,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         // After prefill, state.logits already corresponds to the last prompt token at position (n_prompt_tokens-1).
         int next;
         int token = prompt_tokens[n_prompt_tokens - 1];
-        int pos = n_prompt_tokens - 1;
+        int pos = kv_pos + n_prompt_tokens - 1;  // Use persistent KV position
         
         int generated_count = 0;
         int repeat_count = 0;
@@ -2887,6 +2908,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
 stats_done:
             ;
         }
+        
+        // Update persistent KV cache position for next generation
+        kv_pos += n_prompt_tokens + generated_count;
         
         Print(L"\r\n\r\n");
     }

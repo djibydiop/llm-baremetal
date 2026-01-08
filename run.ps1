@@ -35,6 +35,15 @@ param(
 # Run QEMU (single entrypoint)
 $ErrorActionPreference = 'Stop'
 
+# Best-effort: when using WHPX (or auto which tries WHPX first), request AVX2/FMA exposure.
+# IMPORTANT: only do this when the caller didn't explicitly choose ForceAvx2, and add a retry
+# path without AVX2 if QEMU rejects the CPU flags.
+$autoForceAvx2 = $false
+if (-not $PSBoundParameters.ContainsKey('ForceAvx2') -and ($Accel -eq 'whpx' -or $Accel -eq 'auto')) {
+  $ForceAvx2 = $true
+  $autoForceAvx2 = $true
+}
+
 function Resolve-FirstExistingPath([string[]]$paths) {
   foreach ($p in $paths) {
     if ($p -and (Test-Path $p)) { return $p }
@@ -114,7 +123,7 @@ Write-Host "  QEMU:  $QEMU" -ForegroundColor Gray
 Write-Host "  OVMF:  $OVMF" -ForegroundColor Gray
 Write-Host "  Image: $IMAGE" -ForegroundColor Gray
 Write-Host "  Accel: $Accel" -ForegroundColor Gray
-function Build-QemuArgs([string]$accelMode) {
+function Build-QemuArgs([string]$accelMode, [bool]$forceAvx2) {
   # Map friendly accel names to QEMU accel strings.
   $accelArg = $accelMode
   if ($accelArg -eq 'tcg') { $accelArg = 'tcg,thread=multi' }
@@ -127,7 +136,7 @@ function Build-QemuArgs([string]$accelMode) {
     $cpuModel = $Cpu
   }
 
-  if ($ForceAvx2) {
+  if ($forceAvx2) {
     # Best-effort feature exposure. Note: with some accelerators/CPU models,
     # QEMU may ignore unsupported flags.
     if ($cpuModel -notmatch ',') {
@@ -173,11 +182,11 @@ function Build-QemuArgs([string]$accelMode) {
 
 $accelMode = $null
 if ($Accel -ne 'none') { $accelMode = $Accel }
-$args = Build-QemuArgs $accelMode
+$args = Build-QemuArgs $accelMode $ForceAvx2
 
 if ($Accel -eq 'auto') {
   # Prefer WHPX when available; fall back to no explicit accelerator.
-  $args = Build-QemuArgs 'whpx'
+  $args = Build-QemuArgs 'whpx' $ForceAvx2
 }
 
 function Invoke-QemuNewWindow([string[]]$argv) {
@@ -219,10 +228,24 @@ try {
       $code = 0
     }
 
-    # If WHPX isn't available, QEMU typically exits immediately with an error.
+    if ($code -ne 0 -and $autoForceAvx2) {
+      # QEMU can reject AVX2 flags on some setups. Retry WHPX without them before falling back.
+      Write-Host ("[Run] WHPX failed with AVX2 flags (exit {0}); retrying WHPX without AVX2" -f $code) -ForegroundColor Yellow
+      $args = Build-QemuArgs 'whpx' $false
+      try {
+        & $QEMU @args
+        $code = $LASTEXITCODE
+      } catch [System.Management.Automation.PipelineStoppedException] {
+        $code = 0
+      } catch [System.OperationCanceledException] {
+        $code = 0
+      }
+    }
+
+    # If WHPX isn't available (or still failing), fall back to TCG.
     if ($code -ne 0) {
       Write-Host ("[Run] WHPX accel failed (exit {0}); retrying with TCG" -f $code) -ForegroundColor Yellow
-      $args = Build-QemuArgs 'tcg'
+      $args = Build-QemuArgs 'tcg' $false
       try {
         & $QEMU @args
         $code = $LASTEXITCODE
@@ -246,18 +269,33 @@ try {
   $ErrorActionPreference = $prev
 }
 
-# If WHPX was explicitly requested and it failed, retry with TCG so the workflow keeps working.
+# If WHPX was explicitly requested and it failed, retry without AVX2 (if auto-enabled), then with TCG.
 # (Unless the caller asked for raw exit codes.)
 if (-not $PassThroughExitCode -and $Accel -eq 'whpx' -and $code -ne 0) {
-  Write-Host ("[Run] WHPX failed (exit {0}); retrying with TCG" -f $code) -ForegroundColor Yellow
-  $args = Build-QemuArgs 'tcg'
-  try {
-    & $QEMU @args
-    $code = $LASTEXITCODE
-  } catch [System.Management.Automation.PipelineStoppedException] {
-    $code = 0
-  } catch [System.OperationCanceledException] {
-    $code = 0
+  if ($autoForceAvx2) {
+    Write-Host ("[Run] WHPX failed with AVX2 flags (exit {0}); retrying WHPX without AVX2" -f $code) -ForegroundColor Yellow
+    $args = Build-QemuArgs 'whpx' $false
+    try {
+      & $QEMU @args
+      $code = $LASTEXITCODE
+    } catch [System.Management.Automation.PipelineStoppedException] {
+      $code = 0
+    } catch [System.OperationCanceledException] {
+      $code = 0
+    }
+  }
+
+  if ($code -ne 0) {
+    Write-Host ("[Run] WHPX failed (exit {0}); retrying with TCG" -f $code) -ForegroundColor Yellow
+    $args = Build-QemuArgs 'tcg' $false
+    try {
+      & $QEMU @args
+      $code = $LASTEXITCODE
+    } catch [System.Management.Automation.PipelineStoppedException] {
+      $code = 0
+    } catch [System.OperationCanceledException] {
+      $code = 0
+    }
   }
 }
 

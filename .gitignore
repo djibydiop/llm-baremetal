@@ -49,6 +49,7 @@ SESSION_*.md
 GITHUB_UPLOAD.md
 serve_model.py
 test-*.ps1
+!test-qemu.ps1
 
 # Local notes (keep repo clean)
 CHAT_REPL_SUCCESS.md

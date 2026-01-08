@@ -23,3 +23,7 @@ Made in Senegal 🇸🇳 by Djiby Diop
 
 - Model weights are intentionally not tracked in git; use GitHub Releases or your own files.
 - Optional config: copy `repl.cfg.example` → `repl.cfg` (not committed) and rebuild.
+
+## DjibQuant (optional)
+
+If you want smaller weights files, DjibQuant tooling/docs live in this repo (see DJIBQUANT.md).

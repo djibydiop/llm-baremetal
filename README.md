@@ -7,6 +7,7 @@ Made in Senegal 🇸🇳 by Djiby Diop - December 2025
 ## 🎯 What is this?
 
 This project runs **TinyStories language models** (15M-300M parameters) directly on bare-metal hardware without any operating system. It boots from USB and features:
+- **DjibMark tracing**: Omnipresent execution profiling system (Made in 🇸🇳)
 - **Multi-model support**: Auto-detects stories300M/260M/200M/110M/15M/model.bin
 - **Persistent KV cache**: Context retained across prompts for conversation flow
 - **Multi-line prompts**: Use `\` to continue lines, `;;` to submit
@@ -103,6 +104,8 @@ Once booted, the interactive REPL supports:
 - `/log [n]` - Dump last n log entries (default 16, max 128)
 - `/save_log [n]` - Write last n log entries to `llmk-log.txt`
 - `/save_dump` - Write ctx+zones+sentinel+log to `llmk-dump.txt`
+- `/djibmarks` - Show DjibMark execution trace (last 32 marks)
+- `/djibperf` - DjibMark performance analysis by phase
 - `/reset` - Clear budgets/log + untrip sentinel
 
 **Performance:**

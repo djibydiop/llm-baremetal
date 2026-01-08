@@ -18,6 +18,7 @@ No OS. No kernel. Just UEFI firmware, a language model, and you.
 
 ### Core
 - **Bare-metal inference**: Runs directly on UEFI firmware (GNU-EFI)
+- **DjibMark tracing**: Omnipresent execution profiling (0xD31B2026 signature) 🇸🇳
 - **Optimized SIMD**: Runtime dispatch (SSE2 baseline, AVX2+FMA when available)
   - DjibLAS SGEMM with AVX2+FMA (matrix multiply)
   - AVX2 attention helpers with FMA fused ops
@@ -38,9 +39,10 @@ No OS. No kernel. Just UEFI firmware, a language model, and you.
 
 ### REPL Commands
 **Sampling:** `/temp`, `/min_p`, `/top_p`, `/top_k`, `/norepeat`, `/repeat`, `/max_tokens`, `/seed`  
-**Diagnostics:** `/model`, `/cpu`, `/zones`, `/ctx`, `/log [n]`, `/save_log [n]`, `/save_dump`  
+**Diagnostics:** `/model`, `/cpu`, `/zones`, `/ctx`, `/log [n]`, `/save_log [n]`, `/save_dump`, `/djibmarks`, `/djibperf`  
 **Performance:** `/budget [p] [d]`, `/attn [auto|sse2|avx2]`, `/test_failsafe`  
-**Other:** `/stats`, `/stop_you`, `/stop_nl`, `/reset`, `/version`, `/help`
+**Context:** `/clear` (reset KV cache), `/reset` (clear budgets/log)  
+**Other:** `/stats`, `/stop_you`, `/stop_nl`, `/version`, `/help`
 
 ---
 
@@ -231,5 +233,17 @@ Questions? Open an issue on GitHub!
 ---
 
 **Release Date:** January 8, 2026  
-**Commit:** `69a498d`  
+**Commit:** `aa59959`  
 **Tag:** `v1.0.0`
+
+---
+
+## 🇸🇳 Technical Signature: DjibMark
+
+Every execution path is marked with **DjibMark** (`0xD31B2026` = DJIB + 2026), a lightweight tracing system that provides:
+- **Ring buffer**: 256 marks with TSC timestamps
+- **Phase tracking**: BOOT → PREFILL → DECODE → REPL
+- **Zero overhead**: Inline recording (24 bytes/mark)
+- **Introspection**: `/djibmarks` shows trace, `/djibperf` analyzes performance
+
+This omnipresent signature makes the codebase instantly recognizable and enables deep runtime analysis without external tools.

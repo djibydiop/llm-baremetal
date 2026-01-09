@@ -410,6 +410,69 @@ static EFI_GRAPHICS_PIXEL_FORMAT g_gop_pf = PixelFormatMax;
 static EFI_PIXEL_BITMASK g_gop_mask = {0};
 static volatile UINT32 *g_gop_fb32 = NULL;
 
+// Capture mode: used by /draw to collect model output (DSL) instead of printing it.
+static int g_capture_mode = 0;
+static char g_capture_buf[2048];
+static int g_capture_len = 0;
+static int g_capture_truncated = 0;
+
+static void llmk_capture_reset(void) {
+    g_capture_len = 0;
+    g_capture_truncated = 0;
+    g_capture_buf[0] = 0;
+}
+
+static void llmk_capture_append_ascii(const char *piece, int len) {
+    if (!piece || len <= 0) return;
+    if (g_capture_len >= (int)sizeof(g_capture_buf) - 1) {
+        g_capture_truncated = 1;
+        return;
+    }
+    for (int i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)piece[i];
+        // Keep a conservative ASCII subset. Map CR->LF and drop others.
+        if (c == '\r') c = '\n';
+        if (c == '\n' || c == '\t' || (c >= 0x20 && c <= 0x7E)) {
+            if (c == '`') c = ' '; // avoid markdown fences
+            g_capture_buf[g_capture_len++] = (char)c;
+            if (g_capture_len >= (int)sizeof(g_capture_buf) - 1) {
+                g_capture_truncated = 1;
+                break;
+            }
+        }
+    }
+    g_capture_buf[g_capture_len] = 0;
+}
+
+static void llmk_capture_sanitize_inplace(void) {
+    // Trim leading whitespace
+    int start = 0;
+    while (start < g_capture_len && (g_capture_buf[start] == ' ' || g_capture_buf[start] == '\n' || g_capture_buf[start] == '\t')) start++;
+    if (start > 0) {
+        for (int i = 0; i + start <= g_capture_len; i++) g_capture_buf[i] = g_capture_buf[i + start];
+        g_capture_len -= start;
+    }
+
+    // Truncate at an END marker if present
+    for (int i = 0; i + 2 < g_capture_len; i++) {
+        if (g_capture_buf[i] == 'E' && g_capture_buf[i + 1] == 'N' && g_capture_buf[i + 2] == 'D') {
+            g_capture_buf[i] = 0;
+            g_capture_len = i;
+            break;
+        }
+    }
+
+    // Replace any non-useful characters
+    for (int i = 0; i < g_capture_len; i++) {
+        char c = g_capture_buf[i];
+        if (!(c == '\n' || c == '\t' || c == ';' || c == '-' || c == '_' || c == ',' || c == '.' || c == ':' || c == '(' || c == ')' || (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == ' ')) {
+            g_capture_buf[i] = ' ';
+        }
+    }
+    // Ensure null termination
+    g_capture_buf[g_capture_len] = 0;
+}
+
 static int llmk_ascii_is_space(char c) {
     return (c == ' ' || c == '\t' || c == '\r' || c == '\n');
 }
@@ -2451,7 +2514,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     Print(L"  CHAT MODE ACTIVE\r\n");
     Print(L"  Type 'quit' or 'exit' to stop\r\n");
     Print(L"  Multi-line: end line with '\\' to continue; ';;' alone submits\r\n");
-    Print(L"  Commands: /temp /min_p /top_p /top_k /norepeat /repeat /max_tokens /seed /stats /stop_you /stop_nl /model /cpu /zones /budget /attn /test_failsafe /ctx /log /save_log /save_dump /gop /render /save_img /reset /version /help\r\n");
+    Print(L"  Commands: /temp /min_p /top_p /top_k /norepeat /repeat /max_tokens /seed /stats /stop_you /stop_nl /model /cpu /zones /budget /attn /test_failsafe /ctx /log /save_log /save_dump /gop /render /save_img /draw /reset /version /help\r\n");
     Print(L"----------------------------------------\r\n\r\n");
     
     // Sampling parameters
@@ -2489,6 +2552,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     // MAIN LOOP
     while (1) {
         conversation_count++;
+
+        // /draw capture-mode state (per-turn)
+        int draw_mode = 0;
+        int saved_stop_on_you = stop_on_you;
+        int saved_stop_on_double_nl = stop_on_double_nl;
+        int saved_max_gen_tokens = max_gen_tokens;
         
         // Read user input
         CHAR16 user_input[512];
@@ -2498,6 +2567,58 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         // Convert to char
         char prompt[512];
         char16_to_char(prompt, user_input, 512);
+
+        // Special command: /draw uses the model to generate render DSL, captures it, then runs /render.
+        // It intentionally consumes context like any other prompt; use /clear if you want a clean slate.
+        if (my_strncmp(prompt, "/draw", 5) == 0) {
+            if (!g_gop_fb32) {
+                Print(L"\r\nERROR: GOP not available (cannot draw)\r\n\r\n");
+                continue;
+            }
+
+            const char *q = prompt + 5;
+            while (*q == ' ' || *q == '\t') q++;
+            if (*q == 0) {
+                Print(L"\r\nUsage: /draw <prompt>\r\n");
+                Print(L"  Example: /draw a futuristic NOOSPHERE logo\r\n\r\n");
+                continue;
+            }
+
+            // Build a compact instruction prompt.
+            // Keep it short (prompt buffer is 512 bytes).
+            char new_prompt[512];
+            int p = 0;
+            const char *prefix = "Output ONLY render DSL (no prose). Ops: clear R G B; rect X Y W H R G B; pixel X Y R G B; ints; ';' sep. End with END. Canvas:";
+            for (const char *s = prefix; *s && p + 1 < (int)sizeof(new_prompt); s++) new_prompt[p++] = *s;
+            // Append W/H
+            new_prompt[p++] = ' ';
+            p = llmk_ascii_append_u32(new_prompt, (int)sizeof(new_prompt), p, g_gop_w);
+            if (p + 1 < (int)sizeof(new_prompt)) new_prompt[p++] = 'x';
+            p = llmk_ascii_append_u32(new_prompt, (int)sizeof(new_prompt), p, g_gop_h);
+            if (p + 1 < (int)sizeof(new_prompt)) new_prompt[p++] = '.';
+            if (p + 1 < (int)sizeof(new_prompt)) new_prompt[p++] = ' ';
+            const char *mid = "Prompt: ";
+            for (const char *s = mid; *s && p + 1 < (int)sizeof(new_prompt); s++) new_prompt[p++] = *s;
+            for (const char *s = q; *s && p + 1 < (int)sizeof(new_prompt); s++) new_prompt[p++] = *s;
+            if (p + 2 < (int)sizeof(new_prompt)) { new_prompt[p++] = '\n'; new_prompt[p++] = 0; }
+            else new_prompt[(int)sizeof(new_prompt) - 1] = 0;
+
+            // Swap in the synthesized prompt for this turn.
+            for (int i = 0; i < (int)sizeof(prompt); i++) {
+                prompt[i] = new_prompt[i];
+                if (new_prompt[i] == 0) break;
+            }
+
+            // Configure capture mode.
+            draw_mode = 1;
+            g_capture_mode = 1;
+            llmk_capture_reset();
+
+            // Prefer to stop on double newline in case END never appears.
+            stop_on_you = 0;
+            stop_on_double_nl = 1;
+            if (max_gen_tokens > 96) max_gen_tokens = 96;
+        }
         
         // Check for quit
         if (check_quit_command(prompt)) {
@@ -2508,8 +2629,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             break;
         }
         
-        // Check for commands
-        if (prompt[0] == '/') {
+        // Check for commands (except /draw which is handled above and falls through into generation)
+        if (!draw_mode && prompt[0] == '/') {
             if (my_strncmp(prompt, "/temp ", 6) == 0) {
                 float val = 0.0f;
                 int i = 6;
@@ -3123,6 +3244,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 Print(L"  /gop          - Show GOP framebuffer info\r\n");
                 Print(L"  /render <dsl> - Render simple shapes to GOP framebuffer\r\n");
                 Print(L"  /save_img [f] - Save GOP framebuffer as PPM (default llmk-img.ppm)\r\n");
+                Print(L"  /draw <text>  - Ask the model to output DSL and render it (GOP required)\r\n");
                 Print(L"  /reset        - Clear budgets/log + untrip sentinel\r\n");
                 Print(L"  /clear        - Clear KV cache (reset conversation context)\r\n");
                 Print(L"  /djibmarks    - Show DjibMark execution trace (Made in 🇸🇳)\r\n");
@@ -3170,14 +3292,18 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             kv_pos = 0;
         }
         
-        Print(L"AI: ");
+        if (!g_capture_mode) {
+            Print(L"AI: ");
+        }
 
         if (g_llmk_ready) {
             // Reset per-generation overrun counters and print current budget state.
             g_budget_overruns_prefill = 0;
             g_budget_overruns_decode = 0;
-            Print(L"\r\n[llmk][budget] prefill_max=%lu decode_max=%lu\r\n",
-                  g_budget_prefill_cycles, g_budget_decode_cycles);
+            if (!g_capture_mode) {
+                Print(L"\r\n[llmk][budget] prefill_max=%lu decode_max=%lu\r\n",
+                      g_budget_prefill_cycles, g_budget_decode_cycles);
+            }
         }
         
         // Process prompt tokens through model first (prefill)
@@ -3314,12 +3440,16 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 last_token = next;
             }
             
-            // Print token (ALL tokens for now, no filtering!)
+            // Print token (or capture token output for /draw)
             if (next >= 0 && next < config.vocab_size && tokenizer.vocab[next]) {
                 char* piece = tokenizer.vocab[next];
                 int len = my_strlen(piece);
                 if (len > 0) {
-                    uefi_print_utf8_bytes(piece, len);
+                    if (g_capture_mode) {
+                        llmk_capture_append_ascii(piece, len);
+                    } else {
+                        uefi_print_utf8_bytes(piece, len);
+                    }
                     generated_count++;
 
                     // Update ASCII tail buffer for stop detection.
@@ -3427,7 +3557,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         }
 
         // Flush any pending bytes held for mojibake repair across token boundaries.
-        uefi_print_utf8_flush();
+        if (!g_capture_mode) {
+            uefi_print_utf8_flush();
+        }
 
         if (g_test_failsafe_active) {
             g_sentinel.cfg.strict_budget = g_test_failsafe_prev_strict_budget;
@@ -3437,7 +3569,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             Print(L"\r\n[test] fail-safe test cancelled (no trip; restored)\r\n");
         }
 
-        if (g_llmk_ready) {
+        if (g_llmk_ready && !g_capture_mode) {
             Print(L"\r\n[llmk][budget] final prefill_max=%lu decode_max=%lu overruns(p=%d d=%d)\r\n",
                   g_budget_prefill_cycles,
                   g_budget_decode_cycles,
@@ -3445,7 +3577,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                   (int)g_budget_overruns_decode);
         }
 
-        if (stats_enabled) {
+        if (stats_enabled && !g_capture_mode) {
             unsigned long long gen_t1 = rdtsc();
             unsigned long long dt = (gen_t1 > gen_t0) ? (gen_t1 - gen_t0) : 0;
 
@@ -3484,11 +3616,39 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
 stats_done:
             ;
         }
+
+        // If /draw was active, execute the captured DSL now.
+        if (g_capture_mode) {
+            llmk_capture_sanitize_inplace();
+            Print(L"\r\n[draw] captured %d chars%s\r\n", g_capture_len, g_capture_truncated ? L" (truncated)" : L"");
+            if (g_capture_len == 0) {
+                Print(L"[draw] ERROR: empty output\r\n\r\n");
+            } else {
+                int ok = llmk_render_scene_dsl(g_capture_buf);
+                if (ok) {
+                    Print(L"[draw] OK: rendered (use /save_img to export)\r\n\r\n");
+                } else {
+                    // Print a short preview to help debugging prompts.
+                    CHAR16 preview[220];
+                    ascii_to_char16(preview, g_capture_buf, (int)(sizeof(preview) / sizeof(preview[0])));
+                    Print(L"[draw] ERROR: render failed. Output preview: %s\r\n\r\n", preview);
+                }
+            }
+
+            // Disable capture mode and restore sampling flags.
+            g_capture_mode = 0;
+            llmk_capture_reset();
+            stop_on_you = saved_stop_on_you;
+            stop_on_double_nl = saved_stop_on_double_nl;
+            max_gen_tokens = saved_max_gen_tokens;
+        }
         
         // Update persistent KV cache position for next generation
         kv_pos += n_prompt_tokens + generated_count;
         
-        Print(L"\r\n\r\n");
+        if (!g_capture_mode) {
+            Print(L"\r\n\r\n");
+        }
     }
     
     Print(L"Press any key to exit...\r\n");

@@ -2042,6 +2042,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     Print(L"----------------------------------------\r\n");
     Print(L"  CHAT MODE ACTIVE\r\n");
     Print(L"  Type 'quit' or 'exit' to stop\r\n");
+    Print(L"  Multi-line: end line with '\\' to continue; ';;' alone submits\r\n");
     Print(L"  Commands: /temp /min_p /top_p /top_k /norepeat /repeat /max_tokens /seed /stats /stop_you /stop_nl /model /cpu /zones /budget /attn /test_failsafe /ctx /log /save_log /save_dump /reset /version /help\r\n");
     Print(L"----------------------------------------\r\n\r\n");
     

@@ -5,6 +5,8 @@
 #include <efilib.h>
 #include <stdint.h>
 
+// GOP types + GUID are provided by gnu-efi headers (efiprot.h / efilib.h).
+
 #if defined(__x86_64__) || defined(_M_X64)
 #include <emmintrin.h>
 #endif
@@ -398,6 +400,384 @@ DjibMarkState g_djibmark_state = {0};
 
 // Root volume handle (set after OpenVolume). Used for best-effort dumps to files.
 static EFI_FILE_HANDLE g_root = NULL;
+
+// GOP framebuffer (best-effort; may be unavailable on headless firmware paths)
+static EFI_GRAPHICS_OUTPUT_PROTOCOL *g_gop = NULL;
+static UINT32 g_gop_w = 0;
+static UINT32 g_gop_h = 0;
+static UINT32 g_gop_ppsl = 0;
+static EFI_GRAPHICS_PIXEL_FORMAT g_gop_pf = PixelFormatMax;
+static EFI_PIXEL_BITMASK g_gop_mask = {0};
+static volatile UINT32 *g_gop_fb32 = NULL;
+
+static int llmk_ascii_is_space(char c) {
+    return (c == ' ' || c == '\t' || c == '\r' || c == '\n');
+}
+
+static UINT32 llmk_u32_ctz(UINT32 x) {
+    if (x == 0) return 32;
+    UINT32 n = 0;
+    while ((x & 1U) == 0U) { n++; x >>= 1; }
+    return n;
+}
+
+static UINT32 llmk_u32_popcount(UINT32 x) {
+    UINT32 n = 0;
+    while (x) { x &= (x - 1U); n++; }
+    return n;
+}
+
+static EFI_STATUS llmk_gop_init_best_effort(void) {
+    g_gop = NULL;
+    g_gop_fb32 = NULL;
+    g_gop_w = g_gop_h = g_gop_ppsl = 0;
+    g_gop_pf = PixelFormatMax;
+    g_gop_mask.RedMask = g_gop_mask.GreenMask = g_gop_mask.BlueMask = g_gop_mask.ReservedMask = 0;
+
+    EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = NULL;
+    EFI_STATUS st = uefi_call_wrapper(BS->LocateProtocol, 3, &gEfiGraphicsOutputProtocolGuid, NULL, (void **)&gop);
+    if (EFI_ERROR(st) || !gop || !gop->Mode || !gop->Mode->Info) {
+        return EFI_NOT_FOUND;
+    }
+
+    EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info = gop->Mode->Info;
+    if (info->PixelFormat == PixelBltOnly) {
+        return EFI_UNSUPPORTED;
+    }
+    if (gop->Mode->FrameBufferBase == 0 || gop->Mode->FrameBufferSize < 4) {
+        return EFI_UNSUPPORTED;
+    }
+
+    g_gop = gop;
+    g_gop_w = info->HorizontalResolution;
+    g_gop_h = info->VerticalResolution;
+    g_gop_ppsl = info->PixelsPerScanLine;
+    g_gop_pf = info->PixelFormat;
+    g_gop_mask = info->PixelInformation;
+    g_gop_fb32 = (volatile UINT32 *)(UINTN)gop->Mode->FrameBufferBase;
+
+    // Sanity: require 32bpp-like stride.
+    UINT64 needed = (UINT64)g_gop_ppsl * (UINT64)g_gop_h * 4ULL;
+    if (needed > (UINT64)gop->Mode->FrameBufferSize) {
+        // Still allow writes, but clamp later.
+    }
+    return EFI_SUCCESS;
+}
+
+static void llmk_gop_put_pixel(UINT32 x, UINT32 y, UINT8 r, UINT8 g, UINT8 b) {
+    if (!g_gop_fb32) return;
+    if (x >= g_gop_w || y >= g_gop_h) return;
+    UINTN idx = (UINTN)y * (UINTN)g_gop_ppsl + (UINTN)x;
+
+    UINT32 px = 0;
+    if (g_gop_pf == PixelBlueGreenRedReserved8BitPerColor) {
+        px = ((UINT32)b) | ((UINT32)g << 8) | ((UINT32)r << 16) | (0xFFU << 24);
+    } else if (g_gop_pf == PixelRedGreenBlueReserved8BitPerColor) {
+        px = ((UINT32)r) | ((UINT32)g << 8) | ((UINT32)b << 16) | (0xFFU << 24);
+    } else if (g_gop_pf == PixelBitMask) {
+        UINT32 rm = g_gop_mask.RedMask;
+        UINT32 gm = g_gop_mask.GreenMask;
+        UINT32 bm = g_gop_mask.BlueMask;
+        UINT32 rs = llmk_u32_ctz(rm);
+        UINT32 gs = llmk_u32_ctz(gm);
+        UINT32 bs = llmk_u32_ctz(bm);
+        UINT32 rbits = llmk_u32_popcount(rm);
+        UINT32 gbits = llmk_u32_popcount(gm);
+        UINT32 bbits = llmk_u32_popcount(bm);
+        UINT32 rmax = (rbits >= 32) ? 0xFFFFFFFFU : ((1U << rbits) - 1U);
+        UINT32 gmax = (gbits >= 32) ? 0xFFFFFFFFU : ((1U << gbits) - 1U);
+        UINT32 bmax = (bbits >= 32) ? 0xFFFFFFFFU : ((1U << bbits) - 1U);
+        UINT32 rv = (rmax == 0) ? 0 : ((UINT32)r * rmax + 127U) / 255U;
+        UINT32 gv = (gmax == 0) ? 0 : ((UINT32)g * gmax + 127U) / 255U;
+        UINT32 bv = (bmax == 0) ? 0 : ((UINT32)b * bmax + 127U) / 255U;
+        px = ((rv << rs) & rm) | ((gv << gs) & gm) | ((bv << bs) & bm);
+    } else {
+        return;
+    }
+    g_gop_fb32[idx] = px;
+}
+
+static void llmk_gop_get_pixel(UINT32 x, UINT32 y, UINT8 *out_r, UINT8 *out_g, UINT8 *out_b) {
+    if (!out_r || !out_g || !out_b) return;
+    *out_r = *out_g = *out_b = 0;
+    if (!g_gop_fb32) return;
+    if (x >= g_gop_w || y >= g_gop_h) return;
+    UINTN idx = (UINTN)y * (UINTN)g_gop_ppsl + (UINTN)x;
+    UINT32 px = g_gop_fb32[idx];
+
+    if (g_gop_pf == PixelBlueGreenRedReserved8BitPerColor) {
+        *out_b = (UINT8)(px & 0xFFU);
+        *out_g = (UINT8)((px >> 8) & 0xFFU);
+        *out_r = (UINT8)((px >> 16) & 0xFFU);
+    } else if (g_gop_pf == PixelRedGreenBlueReserved8BitPerColor) {
+        *out_r = (UINT8)(px & 0xFFU);
+        *out_g = (UINT8)((px >> 8) & 0xFFU);
+        *out_b = (UINT8)((px >> 16) & 0xFFU);
+    } else if (g_gop_pf == PixelBitMask) {
+        UINT32 rm = g_gop_mask.RedMask;
+        UINT32 gm = g_gop_mask.GreenMask;
+        UINT32 bm = g_gop_mask.BlueMask;
+        UINT32 rs = llmk_u32_ctz(rm);
+        UINT32 gs = llmk_u32_ctz(gm);
+        UINT32 bs = llmk_u32_ctz(bm);
+        UINT32 rbits = llmk_u32_popcount(rm);
+        UINT32 gbits = llmk_u32_popcount(gm);
+        UINT32 bbits = llmk_u32_popcount(bm);
+        UINT32 rmax = (rbits >= 32) ? 0xFFFFFFFFU : ((1U << rbits) - 1U);
+        UINT32 gmax = (gbits >= 32) ? 0xFFFFFFFFU : ((1U << gbits) - 1U);
+        UINT32 bmax = (bbits >= 32) ? 0xFFFFFFFFU : ((1U << bbits) - 1U);
+        UINT32 rv = (rm == 0) ? 0 : ((px & rm) >> rs);
+        UINT32 gv = (gm == 0) ? 0 : ((px & gm) >> gs);
+        UINT32 bv = (bm == 0) ? 0 : ((px & bm) >> bs);
+        *out_r = (rmax == 0) ? 0 : (UINT8)((rv * 255U) / rmax);
+        *out_g = (gmax == 0) ? 0 : (UINT8)((gv * 255U) / gmax);
+        *out_b = (bmax == 0) ? 0 : (UINT8)((bv * 255U) / bmax);
+    }
+}
+
+static void llmk_gop_clear(UINT8 r, UINT8 g, UINT8 b) {
+    if (!g_gop_fb32) return;
+    for (UINT32 y = 0; y < g_gop_h; y++) {
+        for (UINT32 x = 0; x < g_gop_w; x++) {
+            llmk_gop_put_pixel(x, y, r, g, b);
+        }
+    }
+}
+
+static void llmk_gop_fill_rect(UINT32 x, UINT32 y, UINT32 w, UINT32 h, UINT8 r, UINT8 g, UINT8 b) {
+    if (!g_gop_fb32) return;
+    if (w == 0 || h == 0) return;
+    UINT32 x2 = x + w;
+    UINT32 y2 = y + h;
+    if (x >= g_gop_w || y >= g_gop_h) return;
+    if (x2 > g_gop_w) x2 = g_gop_w;
+    if (y2 > g_gop_h) y2 = g_gop_h;
+    for (UINT32 yy = y; yy < y2; yy++) {
+        for (UINT32 xx = x; xx < x2; xx++) {
+            llmk_gop_put_pixel(xx, yy, r, g, b);
+        }
+    }
+}
+
+static const char* llmk_parse_word(const char *s, char *out, int out_cap) {
+    if (!s || !out || out_cap <= 0) return s;
+    while (*s && llmk_ascii_is_space(*s)) s++;
+    int n = 0;
+    while (*s && !llmk_ascii_is_space(*s) && *s != ';') {
+        if (n + 1 < out_cap) out[n++] = *s;
+        s++;
+    }
+    out[n] = 0;
+    return s;
+}
+
+static const char* llmk_parse_i32(const char *s, int *out) {
+    if (!s || !out) return s;
+    while (*s && llmk_ascii_is_space(*s)) s++;
+    int sign = 1;
+    if (*s == '-') { sign = -1; s++; }
+    int v = 0;
+    int any = 0;
+    while (*s >= '0' && *s <= '9') {
+        any = 1;
+        v = v * 10 + (int)(*s - '0');
+        s++;
+    }
+    if (!any) {
+        *out = 0;
+        return NULL;
+    }
+    *out = v * sign;
+    return s;
+}
+
+static const char* llmk_skip_to_stmt_end(const char *s) {
+    if (!s) return s;
+    while (*s && *s != ';') s++;
+    if (*s == ';') s++;
+    return s;
+}
+
+static int llmk_streq(const char *a, const char *b) {
+    if (!a || !b) return 0;
+    while (*a && *b) {
+        if (*a != *b) return 0;
+        a++; b++;
+    }
+    return (*a == 0 && *b == 0);
+}
+
+static int llmk_render_scene_dsl(const char *dsl) {
+    if (!dsl) return 0;
+    if (!g_gop_fb32) return 0;
+
+    const char *s = dsl;
+    int any = 0;
+    while (*s) {
+        while (*s && (llmk_ascii_is_space(*s) || *s == ';')) s++;
+        if (!*s) break;
+
+        char op[16];
+        const char *ns = llmk_parse_word(s, op, (int)sizeof(op));
+        if (!ns) return 0;
+        s = ns;
+
+        if (llmk_streq(op, "clear")) {
+            int r, g, b;
+            s = llmk_parse_i32(s, &r); if (!s) return 0;
+            s = llmk_parse_i32(s, &g); if (!s) return 0;
+            s = llmk_parse_i32(s, &b); if (!s) return 0;
+            if (r < 0) r = 0; if (r > 255) r = 255;
+            if (g < 0) g = 0; if (g > 255) g = 255;
+            if (b < 0) b = 0; if (b > 255) b = 255;
+            llmk_gop_clear((UINT8)r, (UINT8)g, (UINT8)b);
+            any = 1;
+            s = llmk_skip_to_stmt_end(s);
+        } else if (llmk_streq(op, "rect")) {
+            int x, y, w, h, r, g, b;
+            s = llmk_parse_i32(s, &x); if (!s) return 0;
+            s = llmk_parse_i32(s, &y); if (!s) return 0;
+            s = llmk_parse_i32(s, &w); if (!s) return 0;
+            s = llmk_parse_i32(s, &h); if (!s) return 0;
+            s = llmk_parse_i32(s, &r); if (!s) return 0;
+            s = llmk_parse_i32(s, &g); if (!s) return 0;
+            s = llmk_parse_i32(s, &b); if (!s) return 0;
+            if (x < 0) x = 0; if (y < 0) y = 0;
+            if (w < 0) w = 0; if (h < 0) h = 0;
+            if (r < 0) r = 0; if (r > 255) r = 255;
+            if (g < 0) g = 0; if (g > 255) g = 255;
+            if (b < 0) b = 0; if (b > 255) b = 255;
+            llmk_gop_fill_rect((UINT32)x, (UINT32)y, (UINT32)w, (UINT32)h, (UINT8)r, (UINT8)g, (UINT8)b);
+            any = 1;
+            s = llmk_skip_to_stmt_end(s);
+        } else if (llmk_streq(op, "pixel")) {
+            int x, y, r, g, b;
+            s = llmk_parse_i32(s, &x); if (!s) return 0;
+            s = llmk_parse_i32(s, &y); if (!s) return 0;
+            s = llmk_parse_i32(s, &r); if (!s) return 0;
+            s = llmk_parse_i32(s, &g); if (!s) return 0;
+            s = llmk_parse_i32(s, &b); if (!s) return 0;
+            if (x < 0) x = 0; if (y < 0) y = 0;
+            if (r < 0) r = 0; if (r > 255) r = 255;
+            if (g < 0) g = 0; if (g > 255) g = 255;
+            if (b < 0) b = 0; if (b > 255) b = 255;
+            llmk_gop_put_pixel((UINT32)x, (UINT32)y, (UINT8)r, (UINT8)g, (UINT8)b);
+            any = 1;
+            s = llmk_skip_to_stmt_end(s);
+        } else {
+            // Unknown op: skip to ';' to avoid getting stuck.
+            s = llmk_skip_to_stmt_end(s);
+        }
+    }
+    return any;
+}
+
+static EFI_STATUS llmk_open_binary_file(EFI_FILE_HANDLE *out, const CHAR16 *name) {
+    if (!out) return EFI_INVALID_PARAMETER;
+    *out = NULL;
+    if (!g_root || !name) return EFI_NOT_READY;
+
+    // Best-effort truncate by deleting existing file first.
+    EFI_FILE_HANDLE existing = NULL;
+    EFI_STATUS st = uefi_call_wrapper(g_root->Open, 5, g_root, &existing, (CHAR16 *)name,
+                                      EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
+    if (!EFI_ERROR(st) && existing) {
+        uefi_call_wrapper(existing->Delete, 1, existing);
+        existing = NULL;
+    }
+
+    EFI_FILE_HANDLE f = NULL;
+    st = uefi_call_wrapper(g_root->Open, 5, g_root, &f, (CHAR16 *)name,
+                           EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0);
+    if (EFI_ERROR(st)) return st;
+    uefi_call_wrapper(f->SetPosition, 2, f, 0);
+    *out = f;
+    return EFI_SUCCESS;
+}
+
+static EFI_STATUS llmk_file_write_bytes(EFI_FILE_HANDLE f, const void *buf, UINTN nb) {
+    if (!f || (!buf && nb)) return EFI_INVALID_PARAMETER;
+    if (nb == 0) return EFI_SUCCESS;
+    return uefi_call_wrapper(f->Write, 3, f, &nb, (void *)buf);
+}
+
+static int llmk_ascii_append_u32(char *dst, int cap, int pos, UINT32 v) {
+    if (!dst || cap <= 0) return pos;
+    if (pos < 0) pos = 0;
+    if (pos >= cap) return pos;
+
+    char tmp[16];
+    int n = 0;
+    if (v == 0) {
+        tmp[n++] = '0';
+    } else {
+        while (v && n < (int)sizeof(tmp)) {
+            tmp[n++] = (char)('0' + (v % 10U));
+            v /= 10U;
+        }
+    }
+    for (int i = n - 1; i >= 0; i--) {
+        if (pos + 1 >= cap) break;
+        dst[pos++] = tmp[i];
+    }
+    return pos;
+}
+
+// Forward declaration (llmk_save_ppm uses it before definition)
+void* simple_alloc(unsigned long bytes);
+
+static EFI_STATUS llmk_save_ppm(const CHAR16 *name) {
+    if (!g_gop_fb32) return EFI_NOT_READY;
+    if (!name) name = L"llmk-img.ppm";
+
+    EFI_FILE_HANDLE f = NULL;
+    EFI_STATUS st = llmk_open_binary_file(&f, name);
+    if (EFI_ERROR(st)) return st;
+
+    char header[64];
+    int pos = 0;
+    header[pos++] = 'P'; header[pos++] = '6'; header[pos++] = '\n';
+    pos = llmk_ascii_append_u32(header, (int)sizeof(header), pos, g_gop_w);
+    header[pos++] = ' ';
+    pos = llmk_ascii_append_u32(header, (int)sizeof(header), pos, g_gop_h);
+    header[pos++] = '\n';
+    header[pos++] = '2'; header[pos++] = '5'; header[pos++] = '5'; header[pos++] = '\n';
+
+    st = llmk_file_write_bytes(f, header, (UINTN)pos);
+    if (EFI_ERROR(st)) {
+        uefi_call_wrapper(f->Close, 1, f);
+        return st;
+    }
+
+    // Row buffer: RGB bytes
+    UINTN row_bytes = (UINTN)g_gop_w * 3U;
+    UINT8 *row = (UINT8 *)simple_alloc((unsigned long)row_bytes);
+    if (!row) {
+        uefi_call_wrapper(f->Close, 1, f);
+        return EFI_OUT_OF_RESOURCES;
+    }
+
+    for (UINT32 y = 0; y < g_gop_h; y++) {
+        UINTN off = 0;
+        for (UINT32 x = 0; x < g_gop_w; x++) {
+            UINT8 r, g, b;
+            llmk_gop_get_pixel(x, y, &r, &g, &b);
+            row[off++] = r;
+            row[off++] = g;
+            row[off++] = b;
+        }
+        st = llmk_file_write_bytes(f, row, row_bytes);
+        if (EFI_ERROR(st)) {
+            uefi_call_wrapper(f->Close, 1, f);
+            return st;
+        }
+    }
+
+    // Flush-before-close for persistence on real hardware
+    uefi_call_wrapper(f->Flush, 1, f);
+    uefi_call_wrapper(f->Close, 1, f);
+    return EFI_SUCCESS;
+}
 
 static UINT64 g_budget_prefill_cycles = 0;
 static UINT64 g_budget_decode_cycles = 0;
@@ -1607,6 +1987,24 @@ void char16_to_char(char* dest, CHAR16* src, int max_len) {
     dest[i] = 0;
 }
 
+static void ascii_to_char16(CHAR16 *dst, const char *src, int max_len) {
+    if (!dst || max_len <= 0) return;
+    int i = 0;
+    if (!src) {
+        dst[0] = 0;
+        return;
+    }
+    for (; i < max_len - 1 && src[i]; i++) {
+        unsigned char c = (unsigned char)src[i];
+        if (c < 0x20 || c > 0x7E) {
+            dst[i] = L'_';
+        } else {
+            dst[i] = (CHAR16)c;
+        }
+    }
+    dst[i] = 0;
+}
+
 int check_quit_command(char* text) {
     // Check for "quit" or "exit"
     if (my_strcmp(text, "quit") == 0 || my_strcmp(text, "exit") == 0) {
@@ -1700,6 +2098,16 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
           // Attention SIMD dispatch: only use AVX2 if firmware/OS state supports it.
           g_attn_use_avx2 = (cpu_features.has_avx2 && cpu_features.has_avx);
           Print(L"[ATTN] SIMD path: %s\r\n\r\n", g_attn_use_avx2 ? L"AVX2" : L"SSE2");
+    }
+
+    // Best-effort graphics init (GOP). Optional: REPL still works without it.
+    {
+        EFI_STATUS gst = llmk_gop_init_best_effort();
+        if (!EFI_ERROR(gst)) {
+            Print(L"[GOP] Framebuffer ready: %dx%d (ppsl=%d)\r\n\r\n", (int)g_gop_w, (int)g_gop_h, (int)g_gop_ppsl);
+        } else {
+            Print(L"[GOP] Not available (%r)\r\n\r\n", gst);
+        }
     }
     
     // ========================================================================
@@ -2043,7 +2451,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     Print(L"  CHAT MODE ACTIVE\r\n");
     Print(L"  Type 'quit' or 'exit' to stop\r\n");
     Print(L"  Multi-line: end line with '\\' to continue; ';;' alone submits\r\n");
-    Print(L"  Commands: /temp /min_p /top_p /top_k /norepeat /repeat /max_tokens /seed /stats /stop_you /stop_nl /model /cpu /zones /budget /attn /test_failsafe /ctx /log /save_log /save_dump /reset /version /help\r\n");
+    Print(L"  Commands: /temp /min_p /top_p /top_k /norepeat /repeat /max_tokens /seed /stats /stop_you /stop_nl /model /cpu /zones /budget /attn /test_failsafe /ctx /log /save_log /save_dump /gop /render /save_img /reset /version /help\r\n");
     Print(L"----------------------------------------\r\n\r\n");
     
     // Sampling parameters
@@ -2542,6 +2950,57 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                     Print(L"\r\nOK: wrote llmk-dump.txt (flushed)\r\n\r\n");
                 }
                 continue;
+            } else if (my_strncmp(prompt, "/gop", 4) == 0) {
+                if (!g_gop_fb32) {
+                    Print(L"\r\n  GOP: not available\r\n\r\n");
+                } else {
+                    const CHAR16 *pf = L"unknown";
+                    if (g_gop_pf == PixelBlueGreenRedReserved8BitPerColor) pf = L"BGRX8888";
+                    else if (g_gop_pf == PixelRedGreenBlueReserved8BitPerColor) pf = L"RGBX8888";
+                    else if (g_gop_pf == PixelBitMask) pf = L"BITMASK";
+                    Print(L"\r\n  GOP: %dx%d ppsl=%d fmt=%s fb=0x%lx\r\n\r\n",
+                          (int)g_gop_w, (int)g_gop_h, (int)g_gop_ppsl, pf, (UINT64)(UINTN)g_gop_fb32);
+                }
+                continue;
+            } else if (my_strncmp(prompt, "/render", 7) == 0) {
+                if (!g_gop_fb32) {
+                    Print(L"\r\nERROR: GOP not available on this firmware path\r\n\r\n");
+                    continue;
+                }
+                const char *dsl = prompt + 7;
+                while (*dsl == ' ' || *dsl == '\t') dsl++;
+                if (*dsl == 0) {
+                    Print(L"\r\nUsage: /render <dsl>\r\n");
+                    Print(L"  DSL ops (separate by ';'):\r\n");
+                    Print(L"    clear R G B; rect X Y W H R G B; pixel X Y R G B\r\n\r\n");
+                    continue;
+                }
+                int ok = llmk_render_scene_dsl(dsl);
+                if (ok) Print(L"\r\nOK: rendered\r\n\r\n");
+                else Print(L"\r\nERROR: render failed\r\n\r\n");
+                continue;
+            } else if (my_strncmp(prompt, "/save_img", 9) == 0) {
+                if (!g_gop_fb32) {
+                    Print(L"\r\nERROR: GOP not available (nothing to save)\r\n\r\n");
+                    continue;
+                }
+                const char *name = prompt + 9;
+                while (*name == ' ' || *name == '\t') name++;
+
+                CHAR16 out_name[64];
+                if (*name == 0) {
+                    StrCpy(out_name, L"llmk-img.ppm");
+                } else {
+                    ascii_to_char16(out_name, name, (int)(sizeof(out_name) / sizeof(out_name[0])));
+                }
+
+                EFI_STATUS st = llmk_save_ppm(out_name);
+                if (EFI_ERROR(st)) {
+                    Print(L"\r\nERROR: save failed (%r)\r\n\r\n", st);
+                } else {
+                    Print(L"\r\nOK: wrote %s (PPM, flushed)\r\n\r\n", out_name);
+                }
+                continue;
             } else if (my_strncmp(prompt, "/reset", 6) == 0) {
                 Print(L"\r\nResetting runtime state...\r\n");
                 if (g_llmk_ready) {
@@ -2661,6 +3120,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 Print(L"  /log [n]      - Dump last n log entries\r\n");
                 Print(L"  /save_log [n] - Write last n log entries to llmk-log.txt\r\n");
                 Print(L"  /save_dump    - Write ctx+zones+sentinel+log to llmk-dump.txt\r\n");
+                Print(L"  /gop          - Show GOP framebuffer info\r\n");
+                Print(L"  /render <dsl> - Render simple shapes to GOP framebuffer\r\n");
+                Print(L"  /save_img [f] - Save GOP framebuffer as PPM (default llmk-img.ppm)\r\n");
                 Print(L"  /reset        - Clear budgets/log + untrip sentinel\r\n");
                 Print(L"  /clear        - Clear KV cache (reset conversation context)\r\n");
                 Print(L"  /djibmarks    - Show DjibMark execution trace (Made in 🇸🇳)\r\n");
@@ -2670,6 +3132,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 Print(L"Multi-line input:\r\n");
                 Print(L"  End a line with '\\' to continue; type ';;' on its own line to submit.\r\n");
                 Print(L"  Use '\\\\' at end of line for a literal backslash.\r\n\r\n");
+                Print(L"Render DSL:\r\n");
+                Print(L"  clear R G B; rect X Y W H R G B; pixel X Y R G B\r\n\r\n");
                 Print(L"Current settings:\r\n");
                 Print(L"  Temperature: ");
                 Print(L"%d.", (int)temperature);

@@ -2666,6 +2666,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 Print(L"  /djibperf     - DjibMark performance analysis by phase\r\n");
                 Print(L"  /version      - Show build version + features\r\n");
                 Print(L"  /help         - Show this help\r\n\r\n");
+                Print(L"Multi-line input:\r\n");
+                Print(L"  End a line with '\\' to continue; type ';;' on its own line to submit.\r\n");
+                Print(L"  Use '\\\\' at end of line for a literal backslash.\r\n\r\n");
                 Print(L"Current settings:\r\n");
                 Print(L"  Temperature: ");
                 Print(L"%d.", (int)temperature);

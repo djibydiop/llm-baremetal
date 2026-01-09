@@ -1060,32 +1060,34 @@ typedef struct {
 } Config;
 
 static void llmk_print_ctx(const Config *config,
-                           float temperature,
-                           float min_p,
-                           float top_p,
-                           int top_k,
-                           int no_repeat_ngram,
-                           float repeat_penalty,
-                           int max_gen_tokens) {
-    Print(L"\r\nContext:\r\n");
-    Print(L"  model=stories110M.bin\r\n");
-    Print(L"  dim=%d layers=%d heads=%d kv=%d vocab=%d seq=%d\r\n",
-          config->dim, config->n_layers, config->n_heads, config->n_kv_heads, config->vocab_size, config->seq_len);
-    Print(L"Sampling:\r\n");
-    Print(L"  temp=%d.%02d min_p=%d.%02d top_p=%d.%02d top_k=%d\r\n",
-          (int)temperature, (int)((temperature - (int)temperature) * 100.0f),
-          (int)min_p, (int)((min_p - (int)min_p) * 100.0f),
-          (int)top_p, (int)((top_p - (int)top_p) * 100.0f),
-          top_k);
-    Print(L"  norepeat=%d repeat_penalty=%d.%02d max_tokens=%d\r\n",
-          no_repeat_ngram,
-          (int)repeat_penalty, (int)((repeat_penalty - (int)repeat_penalty) * 100.0f),
-          max_gen_tokens);
+                   const CHAR16 *model_name,
+                   int kv_pos,
+                   float temperature,
+                   float min_p,
+                   float top_p,
+                   int top_k,
+                   int no_repeat_ngram,
+                   float repeat_penalty,
+                   int max_gen_tokens) {
+    Print(L"\r\nCTX\r\n");
+    Print(L"  model=%s\r\n", model_name ? model_name : L"(unknown)");
+    Print(L"  dim=%d layers=%d heads=%d kv=%d vocab=%d\r\n",
+        config->dim, config->n_layers, config->n_heads, config->n_kv_heads, config->vocab_size);
+    Print(L"  seq_len=%d kv_pos=%d\r\n", config->seq_len, kv_pos);
+    Print(L"  sample: temp=%d.%02d min_p=%d.%02d top_p=%d.%02d top_k=%d\r\n",
+        (int)temperature, (int)((temperature - (int)temperature) * 100.0f),
+        (int)min_p, (int)((min_p - (int)min_p) * 100.0f),
+        (int)top_p, (int)((top_p - (int)top_p) * 100.0f),
+        top_k);
+    Print(L"          norepeat=%d repeat=%d.%02d max_tokens=%d\r\n",
+        no_repeat_ngram,
+        (int)repeat_penalty, (int)((repeat_penalty - (int)repeat_penalty) * 100.0f),
+        max_gen_tokens);
     if (g_llmk_ready) {
-        Print(L"Budgets:\r\n");
-        Print(L"  prefill_max=%lu decode_max=%lu overruns(p=%d d=%d)\r\n",
-              g_budget_prefill_cycles, g_budget_decode_cycles,
-              (int)g_budget_overruns_prefill, (int)g_budget_overruns_decode);
+      Print(L"  budget: prefill=%lu decode=%lu strict=%d overruns(p=%d d=%d)\r\n",
+          g_budget_prefill_cycles, g_budget_decode_cycles,
+          (int)g_sentinel.cfg.strict_budget,
+          (int)g_budget_overruns_prefill, (int)g_budget_overruns_decode);
     }
     Print(L"\r\n");
 }
@@ -1554,16 +1556,28 @@ void read_user_input(CHAR16* buffer, int max_len) {
         uefi_call_wrapper(ST->ConIn->ReadKeyStroke, 2, ST->ConIn, &Key);
         
         if (Key.UnicodeChar == 0x000D) {  // Enter
-            // Check for multi-line continuation: if line ends with '\', continue
-            if (pos > 0 && buffer[pos - 1] == L'\\') {
-                buffer[pos - 1] = L'\n';  // Replace \ with newline
-                Print(L"\r\n... ");
-                line_start = pos;
-                continue;
+            // If the user ends the line with "\\\\", treat it as a literal "\\" and do NOT continue.
+            if (pos >= 2 && buffer[pos - 2] == L'\\' && buffer[pos - 1] == L'\\') {
+                pos -= 1;
+                buffer[pos - 1] = L'\\';
+            } else {
+                // Multi-line continuation: if the current line ends with '\\', continue.
+                if (pos > 0 && buffer[pos - 1] == L'\\') {
+                    buffer[pos - 1] = L'\n';  // Replace \ with newline
+                    Print(L"\r\n... ");
+                    line_start = pos;
+                    continue;
+                }
             }
-            // Check for empty line with ";;" to end multi-line input
-            if (pos >= 2 && buffer[pos - 2] == L';' && buffer[pos - 1] == L';') {
-                pos -= 2;  // Remove ;;
+
+            // Multi-line terminator: line is exactly ";;" on its own line.
+            if ((pos - line_start) == 2 && buffer[line_start] == L';' && buffer[line_start + 1] == L';') {
+                // Remove terminator line and the preceding newline if present.
+                if (line_start > 0 && buffer[line_start - 1] == L'\n') {
+                    pos = line_start - 1;
+                } else {
+                    pos = line_start;
+                }
                 buffer[pos] = 0;
                 Print(L"\r\n");
                 break;
@@ -2421,7 +2435,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 Print(L"  Next prompt should trip and auto-dump ctx/zones/sentinel/log.\r\n\r\n");
                 continue;
             } else if (my_strncmp(prompt, "/ctx", 4) == 0) {
-                llmk_print_ctx(&config, temperature, min_p, top_p, top_k, no_repeat_ngram, repeat_penalty, max_gen_tokens);
+                llmk_print_ctx(&config, model_filename, kv_pos, temperature, min_p, top_p, top_k, no_repeat_ngram, repeat_penalty, max_gen_tokens);
                 continue;
             } else if (my_strncmp(prompt, "/log", 4) == 0) {
                 UINT32 n = 16;
@@ -2487,11 +2501,13 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 {
                     CHAR16 line[256];
                     llmk_file_write_u16(f, L"Context:\r\n");
-                    SPrint(line, sizeof(line), L"  model=stories110M.bin\r\n");
+                          SPrint(line, sizeof(line), L"  model=%s\r\n", model_filename ? model_filename : L"(unknown)");
                     llmk_file_write_u16(f, line);
                     SPrint(line, sizeof(line), L"  dim=%d layers=%d heads=%d kv=%d vocab=%d seq=%d\r\n",
                            config.dim, config.n_layers, config.n_heads, config.n_kv_heads, config.vocab_size, config.seq_len);
                     llmk_file_write_u16(f, line);
+                          SPrint(line, sizeof(line), L"  kv_pos=%d\r\n", kv_pos);
+                          llmk_file_write_u16(f, line);
                     llmk_file_write_u16(f, L"Sampling:\r\n");
                     SPrint(line, sizeof(line), L"  temp=%d.%02d min_p=%d.%02d top_p=%d.%02d top_k=%d\r\n",
                            (int)temperature, (int)((temperature - (int)temperature) * 100.0f),
@@ -2541,11 +2557,11 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 Print(L"OK: KV cache cleared, context reset\r\n\r\n");
                 continue;
             } else if (my_strncmp(prompt, "/version", 8) == 0) {
-                Print(L"\r\nLLAMA2 CHAT REPL V3 - Bare-Metal Edition\r\n");
-                Print(L"  Build: 2026-01-08 (Jan 8)\r\n");
-                Print(L"  SIMD: djiblas_sgemm AVX2+FMA, attention AVX2\r\n");
-                Print(L"  Features: LLM-Kernel (zones+sentinel+log), DjibMark tracing, UTF-8, persist\r\n");
-                Print(L"  Made in Senegal 🇸🇳 by Djiby Diop\r\n\r\n");
+                Print(L"\r\nllm-baremetal REPL v3\r\n");
+                Print(L"  build=2026-01-08\r\n");
+                Print(L"  model=%s seq_len=%d kv_pos=%d\r\n", model_filename ? model_filename : L"(unknown)", config.seq_len, kv_pos);
+                Print(L"  features=zones+sentinel+log djibmark utf8 multiline persist\r\n");
+                Print(L"  hint: /cpu for SIMD, /ctx for config\r\n\r\n");
                 continue;
             } else if (my_strncmp(prompt, "/djibmarks", 10) == 0) {
                 DJIBMARK_REPL();
@@ -2712,7 +2728,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 BOOLEAN ok = llmk_sentinel_phase_end(&g_sentinel);
                 if (g_sentinel.tripped) {
                     Print(L"\r\n[llmk] prefill stopped (fail-safe) at i=%d\r\n", i);
-                    llmk_print_ctx(&config, temperature, min_p, top_p, top_k, no_repeat_ngram, repeat_penalty, max_gen_tokens);
+                    llmk_print_ctx(&config, model_filename, kv_pos, temperature, min_p, top_p, top_k, no_repeat_ngram, repeat_penalty, max_gen_tokens);
                     llmk_zones_print(&g_zones);
                     llmk_sentinel_print_status(&g_sentinel);
                     llmk_print_log(32);
@@ -2901,7 +2917,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 BOOLEAN ok = llmk_sentinel_phase_end(&g_sentinel);
                 if (g_sentinel.tripped) {
                     Print(L"\r\n[llmk] decode stopped (fail-safe) at step=%d pos=%d\r\n", step, pos);
-                    llmk_print_ctx(&config, temperature, min_p, top_p, top_k, no_repeat_ngram, repeat_penalty, max_gen_tokens);
+                    llmk_print_ctx(&config, model_filename, kv_pos, temperature, min_p, top_p, top_k, no_repeat_ngram, repeat_penalty, max_gen_tokens);
                     llmk_zones_print(&g_zones);
                     llmk_sentinel_print_status(&g_sentinel);
                     llmk_print_log(32);
